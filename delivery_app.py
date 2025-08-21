@@ -1,5 +1,7 @@
 import math
 import requests
+import streamlit as st
+import os
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
@@ -22,9 +24,9 @@ center_lon = 35.9006
 city_radius = 7.0
 rate_per_km = 32
 cargo_prices = {
-    'small': 350,
-    'medium': 500,
-    'large': 800
+    'маленький': 350,
+    'средний': 500,
+    'большой': 800
 }
 
 def geocode_address(address, api_key):
@@ -43,7 +45,7 @@ def geocode_address(address, api_key):
 
 def calculate_delivery_cost(cargo_size, dest_lat, dest_lon):
     if cargo_size not in cargo_prices:
-        raise ValueError("Неверный размер груза. Доступны: small, medium, large")
+        raise ValueError("Неверный размер груза. Доступны: маленький, средний, большой")
     
     base_cost = cargo_prices[cargo_size]
     dist_from_center = haversine(center_lat, center_lon, dest_lat, dest_lon)
@@ -56,17 +58,23 @@ def calculate_delivery_cost(cargo_size, dest_lat, dest_lon):
         extra_cost = total_extra_distance * rate_per_km
         return round(base_cost + extra_cost, 2)
 
-if __name__ == "__main__":
-    api_key = st.secrets["API_KEY"]
-    
-    print("Добро пожаловать в калькулятор доставки по Твери!")
-    cargo_size = input("Введите размер груза (small, medium, large): ").strip().lower()
-    address = input("Введите адрес доставки (например, 'Тверь, ул. Советская, 10'): ").strip()
-    
-    try:
-        dest_lat, dest_lon = geocode_address(address, api_key)
-        cost = calculate_delivery_cost(cargo_size, dest_lat, dest_lon)
-        print(f"Стоимость доставки: {cost} руб.")
-    except ValueError as e:
+st.title("Калькулятор стоимости доставки по Твери")
+st.write("Введите адрес доставки и выберите размер груза.")
 
-        print(f"Ошибка: {e}")
+api_key = os.environ.get("API_KEY")
+if not api_key:
+    st.error("Ошибка: API-ключ не настроен. Обратитесь к администратору.")
+else:
+    cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
+    address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10')")
+
+    if st.button("Рассчитать"):
+        if address:
+            try:
+                dest_lat, dest_lon = geocode_address(address, api_key)
+                cost = calculate_delivery_cost(cargo_size, dest_lat, dest_lon)
+                st.success(f"Стоимость доставки: {cost} руб.")
+            except ValueError as e:
+                st.error(f"Ошибка: {e}")
+        else:
+            st.warning("Введите адрес.")
