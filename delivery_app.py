@@ -57,7 +57,7 @@ def calculate_delivery_cost(cargo_size, dest_lat, dest_lon):
         return round(base_cost + extra_cost, 2)
 
 if __name__ == "__main__":
-    api_key = '371ed7e9-e285-4ad1-83ab-405ea6d79862'
+    api_key = st.secrets["API_KEY"]
     
     print("Добро пожаловать в калькулятор доставки по Твери!")
     cargo_size = input("Введите размер груза (small, medium, large): ").strip().lower()
@@ -68,4 +68,5 @@ if __name__ == "__main__":
         cost = calculate_delivery_cost(cargo_size, dest_lat, dest_lon)
         print(f"Стоимость доставки: {cost} руб.")
     except ValueError as e:
+
         print(f"Ошибка: {e}")
