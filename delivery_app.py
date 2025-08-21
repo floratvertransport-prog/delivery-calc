@@ -22,6 +22,8 @@ def haversine(lat1, lon1, lat2, lon2):
 
 # Функция для проверки, внутри ли точка полигона (ray-casting)
 def is_inside_polygon(point, polygon):
+    if not polygon:  # Проверка на пустой или None полигон
+        raise ValueError("Полигон не загружен")
     x, y = point[0], point[1]  # lon, lat
     n = len(polygon)
     inside = False
@@ -58,6 +60,8 @@ def distance_to_segment(p, a, b):
 
 # Расчёт минимального расстояния до полигона
 def distance_to_polygon(point, polygon):
+    if not polygon:  # Проверка на пустой или None полигон
+        raise ValueError("Полигон не загружен")
     min_dist = float('inf')
     n = len(polygon)
     for i in range(n):
@@ -82,11 +86,13 @@ def load_tver_polygon():
             else:
                 raise ValueError("Неподдерживаемый тип GeoJSON")
             return [(lon, lat) for lon, lat in polygon]
+        else:
+            raise ValueError(f"Ошибка HTTP: {response.status_code}")
     except Exception as e:
         st.warning(f"Не удалось загрузить полигон Твери: {e}. Используется запасной полигон.")
         return fallback_tver_polygon()
 
-# Упрощённый статический полигон Твери (около 100 точек, ключевые границы)
+# Упрощённый статический полигон Твери (около 100 точек)
 def fallback_tver_polygon():
     return [
         (35.8327, 56.8969), (35.8368, 56.8937), (35.8450, 56.8910), (35.8542, 56.8887),
@@ -287,16 +293,21 @@ def calculate_delivery_cost(cargo_size, dest_lat, dest_lon):
     if cargo_size not in cargo_prices:
         raise ValueError("Неверный размер груза. Доступны: маленький, средний, большой")
     
-    base_cost = cargo_prices[cargo_size]
+    if not tver_polygon:  # Проверка на пустой полигон
+        raise ValueError("Ошибка: полигон Твери не загружен")
     
+    base_cost = cargo_prices[cargo_size]
     point = (dest_lon, dest_lat)
-    if is_inside_polygon(point, tver_polygon):
-        return base_cost
-    else:
-        dist_from_boundary = distance_to_polygon(point, tver_polygon)
-        total_extra_distance = dist_from_boundary * 2
-        extra_cost = total_extra_distance * rate_per_km
-        return round(base_cost + extra_cost, 2)
+    try:
+        if is_inside_polygon(point, tver_polygon):
+            return base_cost
+        else:
+            dist_from_boundary = distance_to_polygon(point, tver_polygon)
+            total_extra_distance = dist_from_boundary * 2
+            extra_cost = total_extra_distance * rate_per_km
+            return round(base_cost + extra_cost, 2)
+    except ValueError as e:
+        raise ValueError(f"Ошибка расчёта: {e}")
 
 # Загрузка полигона один раз при запуске
 try:
@@ -304,6 +315,11 @@ try:
 except Exception as e:
     st.error(f"Ошибка загрузки границы Твери: {e}. Используется запасной полигон.")
     tver_polygon = fallback_tver_polygon()
+
+# Проверка, что полигон не None и не пустой
+if not tver_polygon:
+    st.error("Критическая ошибка: полигон Твери не инициализирован. Обратитесь к администратору.")
+    tver_polygon = fallback_tver_polygon()  # Дополнительная попытка загрузки запасного полигона
 
 st.title("Калькулятор стоимости доставки по Твери")
 st.write("Введите адрес доставки и выберите размер груза.")
