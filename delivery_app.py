@@ -231,7 +231,7 @@ st.title("Калькулятор стоимости доставки по Тве
 st.write("Введите адрес доставки и выберите размер груза.")
 
 api_key = os.environ.get("API_KEY")
-routing_api_key = os.environ.get("2GIS_ROUTING_API_KEY")
+routing_api_key = os.environ.get("GIS_ROUTING_API_KEY")
 if not api_key:
     st.error("Ошибка: API-ключ для геокодирования не настроен. Обратитесь к администратору.")
 else:
@@ -244,9 +244,9 @@ else:
         for i, point in enumerate(exit_points, 1):
             st.write(f"Точка {i}: {point}")
         if not routing_api_key:
-            st.warning("2GIS_ROUTING_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.5.")
+            st.warning("GIS_ROUTING_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.5.")
         else:
-            st.success("2GIS_ROUTING_API_KEY настроен. Расстояние будет рассчитано по реальным дорогам.")
+            st.success("GIS_ROUTING_API_KEY настроен. Расстояние будет рассчитано по реальным дорогам.")
         cache = load_cache()
         if cache:
             st.write("Кэш расстояний:")
@@ -291,3 +291,4 @@ else:
                 st.error(f"Ошибка при расчёте: {e}")
         else:
             st.warning("Введите адрес.")
+
