@@ -114,7 +114,7 @@ def geocode_address(address, api_key):
 
 # Асинхронный запрос к 2GIS Routing API для дорожного расстояния
 async def get_road_distance_2gis(start_lon, start_lat, end_lon, end_lat, api_key):
-    url = f"https://catalog-api.2gis.com/3.0/routing/matrix?version=3.0&apikey={api_key}"
+    url = "https://routing.api.2gis.com/routing/3.0.0/matrix"
     data = {
         "points": [
             {
@@ -130,19 +130,25 @@ async def get_road_distance_2gis(start_lon, start_lat, end_lon, end_lat, api_key
         ],
         "lang": "ru"
     }
-    headers = {'Content-Type': 'application/json'}
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {api_key}'
+    }
     
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=data, headers=headers) as response:
-            if response.status == 200:
-                data = await response.json()
-                try:
-                    distance = data['routes'][0]['distance'] / 1000  # Метры в км
-                    return distance
-                except (KeyError, IndexError):
-                    raise ValueError("Не удалось получить маршрут. Проверьте адрес или API-ключ.")
-            else:
-                raise ValueError(f"Ошибка 2GIS Routing API: {response.status}")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=data, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    try:
+                        distance = data['routes'][0]['distance'] / 1000  # Метры в км
+                        return distance
+                    except (KeyError, IndexError):
+                        raise ValueError("Не удалось получить маршрут. Проверьте адрес или API-ключ.")
+                else:
+                    raise ValueError(f"Ошибка 2GIS Routing API: HTTP {response.status}")
+    except aiohttp.ClientError as e:
+        raise ValueError(f"Ошибка соединения с 2GIS API: {str(e)}")
 
 # Поиск ближайшей точки выхода
 def find_nearest_exit_point(dest_lat, dest_lon):
@@ -292,4 +298,3 @@ else:
                 st.error(f"Ошибка при расчёте: {e}")
         else:
             st.warning("Введите адрес.")
-
