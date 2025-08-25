@@ -33,7 +33,7 @@ exit_points = [
     (35.932805, 56.902966)   # Направление: Сонково, Сандово, Лесное, Максатиха, Рамешки, Весьегонск, Калязин, Кесова Гора, Красный Холм, Бежецк, Кашин
 ]
 
-# Таблица расстояний (туда и обратно, км) как запасной вариант
+# Таблица расстояний (туда и обратно, км)
 distance_table = {
     'Клин': {'distance': 140, 'exit_point': (36.055364, 56.795587)},
     'Редкино': {'distance': 60, 'exit_point': (36.055364, 56.795587)},
@@ -111,6 +111,19 @@ def geocode_address(address, api_key):
             raise ValueError("Адрес не найден. Уточните адрес (например, добавьте 'Тверь' или 'Тверская область').")
     else:
         raise ValueError(f"Ошибка API: {response.status_code}")
+
+# Получение IP сервера Render
+async def get_server_ip():
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get('https://api.ipify.org?format=json') as resp:
+                if resp.status == 200:
+                    ip_data = await resp.json()
+                    return ip_data['ip']
+                else:
+                    return f"Ошибка получения IP: HTTP {resp.status}"
+    except aiohttp.ClientError as e:
+        return f"Ошибка соединения при получении IP: {str(e)}"
 
 # Асинхронный запрос к 2GIS Routing API для дорожного расстояния
 async def get_road_distance_2gis(start_lon, start_lat, end_lon, end_lat, api_key):
@@ -250,6 +263,9 @@ else:
         st.write("Точки выхода из Твери:")
         for i, point in enumerate(exit_points, 1):
             st.write(f"Точка {i}: {point}")
+        # Показываем IP сервера в админ-режиме
+        server_ip = asyncio.run(get_server_ip())
+        st.write(f"IP сервера Render: {server_ip}")
         if not routing_api_key:
             st.warning("GIS_ROUTING_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.5.")
         else:
