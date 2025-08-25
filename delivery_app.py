@@ -91,8 +91,11 @@ def load_cache():
     return {}
 
 def save_cache(cache):
-    with open('cache.json', 'w', encoding='utf-8') as f:
-        json.dump(cache, f, ensure_ascii=False, indent=2)
+    try:
+        with open('cache.json', 'w', encoding='utf-8') as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.warning(f"Ошибка при сохранении кэша: {e}")
 
 # Геокодирование адреса через Яндекс
 def geocode_address(address, api_key):
@@ -157,12 +160,10 @@ def extract_locality(address):
     for locality in distance_table.keys():
         if locality.lower() in address.lower():
             return locality
-    # Проверяем кэш
     cache = load_cache()
     for locality in cache.keys():
         if locality.lower() in address.lower():
             return locality
-    # Извлекаем населённый пункт из адреса (грубое извлечение)
     parts = address.split(',')
     for part in parts:
         part = part.strip()
@@ -231,7 +232,7 @@ st.title("Калькулятор стоимости доставки по Тве
 st.write("Введите адрес доставки и выберите размер груза.")
 
 api_key = os.environ.get("API_KEY")
-routing_api_key = os.environ.get("GIS_ROUTING_API_KEY")
+routing_api_key = os.environ.get("2GIS_ROUTING_API_KEY")
 if not api_key:
     st.error("Ошибка: API-ключ для геокодирования не настроен. Обратитесь к администратору.")
 else:
@@ -244,9 +245,9 @@ else:
         for i, point in enumerate(exit_points, 1):
             st.write(f"Точка {i}: {point}")
         if not routing_api_key:
-            st.warning("GIS_ROUTING_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.5.")
+            st.warning("2GIS_ROUTING_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.5.")
         else:
-            st.success("GIS_ROUTING_API_KEY настроен. Расстояние будет рассчитано по реальным дорогам.")
+            st.success("2GIS_ROUTING_API_KEY настроен. Расстояние будет рассчитано по реальным дорогам.")
         cache = load_cache()
         if cache:
             st.write("Кэш расстояний:")
@@ -257,9 +258,9 @@ else:
         if address:
             try:
                 dest_lat, dest_lon = geocode_address(address, api_key)
-                cost, dist_to_exit, nearest_exit, locality, total_distance, source = await calculate_delivery_cost(
-                    cargo_size, dest_lat, dest_lon, address, routing_api_key
-                )
+                # Оборачиваем асинхронный вызов в asyncio.run()
+                result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key))
+                cost, dist_to_exit, nearest_exit, locality, total_distance, source = result
                 st.success(f"Стоимость доставки: {cost} руб.")
                 if admin_password == "admin123":
                     st.write(f"Координаты адреса: lat={dest_lat}, lon={dest_lon}")
@@ -291,4 +292,3 @@ else:
                 st.error(f"Ошибка при расчёте: {e}")
         else:
             st.warning("Введите адрес.")
-
