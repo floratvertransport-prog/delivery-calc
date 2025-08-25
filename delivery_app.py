@@ -59,46 +59,30 @@ def distance_to_segment(p, a, b):
     return haversine(py, px, cy, cx)
 
 # Расчёт минимального расстояния до полигона
-def distance_to_polygon(point, polygon):
-    if not polygon:
+def distance_to_polygon(point, polygons):
+    if not polygons:
         raise ValueError("Полигон не загружен")
     min_dist = float('inf')
-    n = len(polygon)
-    for i in range(n):
-        a = polygon[i]
-        b = polygon[(i + 1) % n]
-        dist = distance_to_segment(point, a, b)
-        if dist < min_dist:
-            min_dist = dist
+    for polygon in polygons:
+        n = len(polygon)
+        for i in range(n):
+            a = polygon[i]
+            b = polygon[(i + 1) % n]
+            dist = distance_to_segment(point, a, b)
+            if dist < min_dist:
+                min_dist = dist
     return min_dist
 
-# Загрузка полигона Твери с OpenStreetMap (если доступен)
-def load_tver_polygon():
-    url = "http://polygons.openstreetmap.fr/get_geojson.py?id=77760&params=0"
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if data['type'] == 'MultiPolygon':
-                polygon = data['coordinates'][0][0]
-            elif data['type'] == 'Polygon':
-                polygon = data['coordinates'][0]
-            else:
-                raise ValueError("Неподдерживаемый тип GeoJSON")
-            polygon = [(lon, lat) for lon, lat in polygon]
-            # Замыкаем полигон
-            if polygon[0] != polygon[-1]:
-                polygon.append(polygon[0])
-            return polygon
-        else:
-            raise ValueError(f"Ошибка HTTP: {response.status_code}")
-    except Exception as e:
-        st.warning(f"Не удалось загрузить полигон Твери: {e}. Используется запасной полигон из GeoJSON.")
-        return fallback_tver_polygon()
+# Проверка, внутри ли точка хотя бы одного полигона
+def is_inside_polygons(point, polygons):
+    for polygon in polygons:
+        if is_inside_polygon(point, polygon):
+            return True
+    return False
 
-# Запасной полигон из geoBoundaries-RUS-ADM2.geojson (основной, ~200 точек, замкнутый)
-def fallback_tver_polygon():
-    polygon = [
+# Запасной полигон из geoBoundaries-RUS-ADM2.geojson (MultiPolygon: два полигона, замкнутые)
+def fallback_tver_polygons():
+    polygon1 = [
         (35.7214173, 56.8359387), (35.7223742, 56.8351317), (35.7276293, 56.8353822), (35.7239737, 56.8260607),
         (35.7273012, 56.8253055), (35.7309988, 56.819144), (35.7433418, 56.8160917), (35.7588178, 56.8164557),
         (35.7599731, 56.8171937), (35.7619663, 56.8177314), (35.763873, 56.8189298), (35.7678352, 56.8217582),
@@ -128,11 +112,11 @@ def fallback_tver_polygon():
         (36.0005591, 56.858369), (35.9934602, 56.8615278), (35.9934652, 56.8617218), (35.9934887, 56.8626239),
         (35.998932, 56.8663628), (36.0006122, 56.8687334), (36.0022826, 56.8710722), (35.9999815, 56.8733578),
         (35.9906489, 56.8782306), (35.9876333, 56.8780643), (35.9865086, 56.8785704), (35.9846891, 56.8787873),
-        (35.9829358, 55.879185), (35.981312, 56.8792841), (35.9669415, 56.8896158), (35.9675196, 56.8898633),
+        (35.9829358, 56.879185), (35.981312, 56.8792841), (35.9669415, 56.8896158), (35.9675196, 56.8898633),
         (35.9666388, 56.8904184), (35.9659613, 56.8904184), (35.964149, 56.8916212), (35.9645894, 56.8925926),
         (35.9627424, 56.8935121), (35.9587687, 56.8935841), (35.9462309, 56.8954271), (35.9444141, 56.8959219),
         (35.942162, 56.8986972), (35.9388636, 56.9010101), (35.9319068, 56.903069), (35.9293276, 56.9032585),
-        (35.9279798, 56.8964301), (35.9279749, 56.8963348), (35.9289329, 56.8957111), (35.9294469, 56.8929011),
+        (35.9289798, 56.8964301), (35.9289749, 56.8963348), (35.9299339, 56.8957111), (35.9294469, 56.8929011),
         (35.928301, 56.8928975), (35.9282648, 56.8922528), (35.9282136, 56.8913428), (35.9265728, 56.8895936),
         (35.923527, 56.88768), (35.9230795, 56.8893623), (35.9218091, 56.8893189), (35.9207505, 56.8921379),
         (35.9214122, 56.8922246), (35.9211211, 56.8939159), (35.9211631, 56.8956671), (35.9221267, 56.8970669),
@@ -170,12 +154,22 @@ def fallback_tver_polygon():
         (35.7656854, 56.8481322), (35.7646158, 56.8479319), (35.7636899, 56.8478543), (35.7612564, 56.8474671),
         (35.7502307, 56.8446322), (35.7391718, 56.8407114), (35.7397198, 56.8394646), (35.7404116, 56.8384412),
         (35.7355213, 56.8371304), (35.7297909, 56.8365197), (35.7271892, 56.8371549), (35.7252607, 56.8371519),
-        (35.7215606, 56.8365438), (35.7214173, 56.8359387), (35.7214173, 56.8359387)
+        (35.7215606, 56.8365438), (35.7214173, 56.8359387)
     ]
-    # Замыкаем полигон
-    if polygon[0] != polygon[-1]:
-        polygon.append(polygon[0])
-    return polygon
+    polygon2 = [
+        (36.0363392, 56.8959649), (36.0375516, 56.8957085), (36.040112, 56.8945521), (36.0439283, 56.8927756),
+        (36.0454766, 56.8936077), (36.0534655, 56.8947017), (36.0588419, 56.8942961), (36.0649584, 56.8954003),
+        (36.0682068, 56.900763), (36.060916, 56.9022797), (36.0584163, 56.9000046), (36.0561249, 56.9004976),
+        (36.0600133, 56.907891), (36.0511949, 56.907891), (36.0491119, 56.9050096), (36.0420438, 56.9040177),
+        (36.0434074, 56.900314), (36.0413635, 56.9013015), (36.0402982, 56.9006377), (36.0376503, 56.8984191),
+        (36.0368853, 56.8971605), (36.0363392, 56.8959649)
+    ]
+    # Замыкаем полигоны
+    if polygon1[0] != polygon1[-1]:
+        polygon1.append(polygon1[0])
+    if polygon2[0] != polygon2[-1]:
+        polygon2.append(polygon2[0])
+    return [polygon1, polygon2]
 
 # Тарифы
 rate_per_km = 32
@@ -208,27 +202,25 @@ def calculate_delivery_cost(cargo_size, dest_lat, dest_lon):
     base_cost = cargo_prices[cargo_size]
     
     point = (dest_lon, dest_lat)
-    if is_inside_polygon(point, tver_polygon):
+    if is_inside_polygons(point, tver_polygons):
         return base_cost
     else:
-        dist_from_boundary = distance_to_polygon(point, tver_polygon)
+        dist_from_boundary = distance_to_polygon(point, tver_polygons)
         total_extra_distance = dist_from_boundary * 2
         extra_cost = total_extra_distance * rate_per_km
         return round(base_cost + extra_cost, 2)
 
-# Загрузка полигона один раз при запуске
-try:
-    tver_polygon = load_tver_polygon()
-except Exception as e:
-    st.warning(f"Не удалось загрузить полигон Твери: {e}. Используется запасной полигон.")
-    tver_polygon = fallback_tver_polygon()
+# Загрузка полигонов один раз при запуске
+tver_polygons = fallback_tver_polygons()  # Используем только встроенные полигоны
 
 # Режим админа для отладки
 admin_password = st.text_input("Админ пароль для отладки (оставьте пустым для обычного режима)", type="password")
 if admin_password == "admin123":  # Измените пароль на свой
-    st.write(f"Количество точек в полигоне: {len(tver_polygon)}")
-    st.write(f"Первая точка полигона: {tver_polygon[0]}")
-    st.write(f"Последняя точка полигона: {tver_polygon[-1]} (должна совпадать с первой для замыкания)")
+    for i, polygon in enumerate(tver_polygons, 1):
+        st.write(f"Полигон {i}:")
+        st.write(f"  Количество точек: {len(polygon)}")
+        st.write(f"  Первая точка: {polygon[0]}")
+        st.write(f"  Последняя точка: {polygon[-1]} (должна совпадать с первой для замыкания)")
 
 st.title("Калькулятор стоимости доставки по Твери")
 st.write("Введите адрес доставки и выберите размер груза.")
@@ -248,15 +240,14 @@ else:
                 st.success(f"Стоимость доставки: {cost} руб.")
                 if admin_password == "admin123":
                     point = (dest_lon, dest_lat)
-                    inside = is_inside_polygon(point, tver_polygon)
+                    inside = is_inside_polygons(point, tver_polygons)
                     st.write(f"Координаты адреса: lat={dest_lat}, lon={dest_lon}")
                     st.write(f"Адрес внутри границы: {inside}")
                     if not inside:
-                        dist_from_boundary = distance_to_polygon(point, tver_polygon)
+                        dist_from_boundary = distance_to_polygon(point, tver_polygons)
                         st.write(f"Расстояние до границы: {dist_from_boundary} км")
                         st.write(f"Доплата: {dist_from_boundary} × 2 × 32 = {dist_from_boundary * 2 * 32} руб.")
             except ValueError as e:
                 st.error(f"Ошибка: {e}")
         else:
             st.warning("Введите адрес.")
-</xaiArtifact>
