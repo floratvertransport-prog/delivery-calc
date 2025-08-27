@@ -101,7 +101,7 @@ def save_cache(cache):
 def geocode_address(address, api_key):
     url = f"https://geocode-maps.yandex.ru/1.x/?apikey={api_key}&geocode={address}&format=json"
     response = requests.get(url)
-    if response.status_code == 200:
+    if response.status == 200:
         data = response.json()
         try:
             pos = data['response']['GeoObjectCollection']['featureMember'][0]['GeoObject']['Point']['pos']
@@ -125,43 +125,30 @@ async def get_server_ip():
     except aiohttp.ClientError as e:
         return f"Ошибка соединения при получении IP: {str(e)}"
 
-# Асинхронный запрос к 2GIS Routing API для дорожного расстояния
-async def get_road_distance_2gis(start_lon, start_lat, end_lon, end_lat, api_key):
-    url = "https://routing.api.2gis.com/routing/3.0.0/matrix"
-    data = {
-        "points": [
-            {
-                "lon": start_lon,
-                "lat": start_lat,
-                "type": "departure"
-            },
-            {
-                "lon": end_lon,
-                "lat": end_lat,
-                "type": "arrival"
-            }
-        ],
-        "lang": "ru"
-    }
+# Асинхронный запрос к OpenRouteService для дорожного расстояния
+async def get_road_distance_ors(start_lon, start_lat, end_lon, end_lat, api_key):
+    url = "https://api.openrouteservice.org/v2/directions/driving-car"
     headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'Bearer {api_key}'
+        "Authorization": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/geo+json"
     }
-    
+    body = {
+        "coordinates": [[start_lon, start_lat], [end_lon, end_lat]],
+        "units": "km"
+    }
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=data, headers=headers) as response:
+            async with session.post(url, json=body, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
-                    try:
-                        distance = data['routes'][0]['distance'] / 1000  # Метры в км
-                        return distance
-                    except (KeyError, IndexError):
-                        raise ValueError("Не удалось получить маршрут. Проверьте адрес или API-ключ.")
+                    distance = data["routes"][0]["summary"]["distance"]
+                    return distance
                 else:
-                    raise ValueError(f"Ошибка 2GIS Routing API: HTTP {response.status}")
+                    error_text = await response.text()
+                    raise ValueError(f"Ошибка ORS API: HTTP {response.status}. Ответ сервера: {error_text}")
     except aiohttp.ClientError as e:
-        raise ValueError(f"Ошибка соединения с 2GIS API: {str(e)}")
+        raise ValueError(f"Ошибка соединения с ORS API: {str(e)}")
 
 # Поиск ближайшей точки выхода
 def find_nearest_exit_point(dest_lat, dest_lon):
@@ -216,20 +203,20 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
         extra_cost = total_distance * rate_per_km
         return round(base_cost + extra_cost, 2), dist_to_exit, nearest_exit, locality, total_distance, "cache"
     
-    # Используем 2GIS Routing API для дорожного расстояния
+    # Используем OpenRouteService для дорожного расстояния
     if routing_api_key and locality:
         try:
-            road_distance = await get_road_distance_2gis(nearest_exit[0], nearest_exit[1], dest_lon, dest_lat, routing_api_key)
+            road_distance = await get_road_distance_ors(nearest_exit[0], nearest_exit[1], dest_lon, dest_lat, routing_api_key)
             total_distance = road_distance * 2  # Туда и обратно
             extra_cost = total_distance * rate_per_km
             # Сохраняем в кэш
             cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
             save_cache(cache)
-            return round(base_cost + extra_cost, 2), dist_to_exit, nearest_exit, locality, total_distance, "2gis"
+            return round(base_cost + extra_cost, 2), dist_to_exit, nearest_exit, locality, total_distance, "ors"
         except ValueError as e:
-            st.warning(f"Ошибка 2GIS Routing API: {e}. Используется Haversine с коэффициентом 1.5.")
-            # Падение на Haversine с коэффициентом
-            road_distance = dist_to_exit * 1.5
+            st.warning(f"Ошибка ORS API: {e}. Используется Haversine с коэффициентом 1.3.")
+            # Падение на Haversine с коэффициентом 1.3
+            road_distance = dist_to_exit * 1.3
             total_distance = road_distance * 2
             extra_cost = total_distance * rate_per_km
             if locality:
@@ -237,8 +224,8 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
                 save_cache(cache)
             return round(base_cost + extra_cost, 2), dist_to_exit, nearest_exit, locality, total_distance, "haversine"
     else:
-        # Если ключ не настроен, используем Haversine с коэффициентом 1.5
-        road_distance = dist_to_exit * 1.5
+        # Если ключ не настроен, используем Haversine с коэффициентом 1.3
+        road_distance = dist_to_exit * 1.3
         total_distance = road_distance * 2
         extra_cost = total_distance * rate_per_km
         if locality:
@@ -251,7 +238,7 @@ st.title("Калькулятор стоимости доставки по Тве
 st.write("Введите адрес доставки и выберите размер груза.")
 
 api_key = os.environ.get("API_KEY")
-routing_api_key = os.environ.get("GIS_ROUTING_API_KEY")
+routing_api_key = os.environ.get("ORS_API_KEY")
 if not api_key:
     st.error("Ошибка: API-ключ для геокодирования не настроен. Обратитесь к администратору.")
 else:
@@ -263,13 +250,13 @@ else:
         st.write("Точки выхода из Твери:")
         for i, point in enumerate(exit_points, 1):
             st.write(f"Точка {i}: {point}")
-        # Показываем IP сервера в админ-режиме
+        # Показываем IP сервера
         server_ip = asyncio.run(get_server_ip())
         st.write(f"IP сервера Render: {server_ip}")
         if not routing_api_key:
-            st.warning("GIS_ROUTING_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.5.")
+            st.warning("ORS_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.3.")
         else:
-            st.success("GIS_ROUTING_API_KEY настроен. Расстояние будет рассчитано по реальным дорогам.")
+            st.success("ORS_API_KEY настроен. Расстояние будет рассчитано по реальным дорогам.")
         cache = load_cache()
         if cache:
             st.write("Кэш расстояний:")
@@ -280,7 +267,7 @@ else:
         if address:
             try:
                 dest_lat, dest_lon = geocode_address(address, api_key)
-                # Оборачиваем асинхронный вызов в asyncio.run()
+                # Оборачиваем асинхронный вызов
                 result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key))
                 cost, dist_to_exit, nearest_exit, locality, total_distance, source = result
                 st.success(f"Стоимость доставки: {cost} руб.")
@@ -298,13 +285,13 @@ else:
                         st.write(f"Населённый пункт из кэша: {locality}")
                         st.write(f"Километраж из кэша (туда и обратно): {total_distance} км")
                         st.write(f"Доплата: {total_distance} × 32 = {total_distance * 32} руб.")
-                    elif source == "2gis":
+                    elif source == "ors":
                         st.write(f"Населённый пункт: {locality}")
                         st.write(f"Километраж по реальным дорогам (туда и обратно): {total_distance:.2f} км")
                         st.write(f"Доплата: {total_distance:.2f} × 32 = {total_distance * 32:.2f} руб.")
                     elif source == "haversine":
                         st.write(f"Населённый пункт: {locality}")
-                        st.write(f"Километраж по Haversine с коэффициентом 1.5 (туда и обратно): {total_distance:.2f} км")
+                        st.write(f"Километраж по Haversine с коэффициентом 1.3 (туда и обратно): {total_distance:.2f} км")
                         st.write(f"Доплата: {total_distance:.2f} × 32 = {total_distance * 32:.2f} руб.")
                     else:
                         st.write("Доставка внутри Твери, доплата не начислена.")
