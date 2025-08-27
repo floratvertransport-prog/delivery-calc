@@ -6,7 +6,7 @@ import asyncio
 import aiohttp
 import json
 
-# Функция для расчёта расстояния по прямой (Haversine, для определения направления)
+# Функция для расчёта расстояния по прямой (Haversine)
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
     lat1_rad = math.radians(lat1)
@@ -23,7 +23,7 @@ def haversine(lat1, lon1, lat2, lon2):
     distance = R * c
     return distance
 
-# Точки выхода из Твери (координаты административной границы)
+# Точки выхода из Твери
 exit_points = [
     (36.055364, 56.795587),  # Направление: Клин, Редкино, Мокшино, Новозавидовский, Конаково
     (35.871802, 56.808677),  # Направление: Волоколамск, Лотошино, Руза, Шаховская
@@ -33,7 +33,7 @@ exit_points = [
     (35.932805, 56.902966)   # Направление: Сонково, Сандово, Лесное, Максатиха, Рамешки, Весьегонск, Калязин, Кесова Гора, Красный Холм, Бежецк, Кашин
 ]
 
-# Таблица расстояний (туда и обратно, км) как запасной вариант
+# Таблица расстояний (туда и обратно, км)
 distance_table = {
     'Клин': {'distance': 140, 'exit_point': (36.055364, 56.795587)},
     'Редкино': {'distance': 60, 'exit_point': (36.055364, 56.795587)},
@@ -101,7 +101,7 @@ def save_cache(cache):
 def geocode_address(address, api_key):
     url = f"https://geocode-maps.yandex.ru/1.x/?apikey={api_key}&geocode={address}&format=json"
     response = requests.get(url)
-    if response.status == 200:
+    if response.status_code == 200:
         data = response.json()
         try:
             pos = data['response']['GeoObjectCollection']['featureMember'][0]['GeoObject']['Point']['pos']
@@ -146,8 +146,12 @@ async def get_road_distance_ors(start_lon, start_lat, end_lon, end_lat, api_key)
                     distance = data["routes"][0]["summary"]["distance"]
                     return distance
                 else:
-                    error_text = await response.text()
-                    raise ValueError(f"Ошибка ORS API: HTTP {response.status}. Ответ сервера: {error_text}")
+                    error_data = await response.json()
+                    error_code = error_data.get("error", {}).get("code", 0)
+                    error_msg = error_data.get("error", {}).get("message", "Неизвестная ошибка")
+                    if error_code == 2010:  # Ошибка "Could not find routable point"
+                        raise ValueError(f"ORS не нашёл маршрут для координат: {error_msg}. Используется Haversine.")
+                    raise ValueError(f"Ошибка ORS API: HTTP {response.status}. Ответ сервера: {error_msg}")
     except aiohttp.ClientError as e:
         raise ValueError(f"Ошибка соединения с ORS API: {str(e)}")
 
@@ -268,7 +272,7 @@ else:
         if address:
             try:
                 dest_lat, dest_lon = geocode_address(address, api_key)
-                # Оборачиваем асинхронный вызов в asyncio.run()
+                # Оборачиваем асинхронный вызов
                 result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key))
                 cost, dist_to_exit, nearest_exit, locality, total_distance, source = result
                 st.success(f"Стоимость доставки: {cost} руб.")
