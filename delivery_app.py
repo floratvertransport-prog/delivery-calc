@@ -5,80 +5,14 @@ import os
 import asyncio
 import aiohttp
 import json
-import streamlit.components.v1 as components
-from streamlit_javascript import st_javascript
 
 # Установка заголовка вкладки
 st.set_page_config(page_title="Флора калькулятор (розница)")
 
-# JavaScript для определения темы с задержкой и отладкой
-theme_js = """
-<script>
-    function getTheme() {
-        // Ждём полной загрузки страницы
-        window.addEventListener('load', () => {
-            // Проверяем атрибут data-theme
-            const streamlitTheme = document.documentElement.getAttribute("data-theme") || 
-                                 (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-            console.log("Streamlit theme detected: ", streamlitTheme);
-            // Проверяем CSS-класс для тёмной темы
-            const isDark = document.body.classList.contains("stThemeDark");
-            console.log("CSS class stThemeDark present: ", isDark);
-            const finalTheme = isDark ? "dark" : streamlitTheme;
-            console.log("Final theme set: ", finalTheme);
-            localStorage.setItem("streamlit_theme", finalTheme);
-        });
-    }
-    // Вызываем getTheme с задержкой
-    setTimeout(getTheme, 1000); // Задержка 1 секунда
-    // Слушаем изменения системной темы
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", e => {
-        const newTheme = e.matches ? "dark" : "light";
-        console.log("System theme changed to: ", newTheme);
-        localStorage.setItem("streamlit_theme", newTheme);
-    });
-    // Слушаем изменения атрибута data-theme
-    const observer = new MutationObserver(() => {
-        const streamlitTheme = document.documentElement.getAttribute("data-theme") || 
-                              (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-        console.log("Streamlit data-theme changed to: ", streamlitTheme);
-        localStorage.setItem("streamlit_theme", streamlitTheme);
-    });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-</script>
-"""
-components.html(theme_js, height=0, width=0)
-
-# Определение темы и выбор логотипа
-theme = st.session_state.get("theme", "light")  # По умолчанию светлая
-# Проверяем localStorage через JavaScript
-try:
-    js_theme = st_javascript("return localStorage.getItem('streamlit_theme')")
-    st.session_state.js_theme_result = js_theme  # Сохраняем для отладки
-    if js_theme in ["light", "dark"]:
-        theme = js_theme
-    else:
-        # Резервное определение через CSS-класс
-        css_theme = st_javascript("return document.body.classList.contains('stThemeDark') ? 'dark' : 'light'")
-        theme = css_theme if css_theme in ["light", "dark"] else "light"
-except Exception as e:
-    st.session_state.js_theme_error = str(e)  # Сохраняем ошибку для отладки
-    theme = "light"  # Резервный вариант
-
-# Сохраняем тему в session_state и обновляем при изменении
-if st.session_state.get("theme") != theme:
-    st.session_state.theme = theme
-    try:
-        st.rerun()
-    except Exception as e:
-        st.error(f"Ошибка при вызове st.rerun(): {e}")
-
-logo_file = "logo white.png" if theme == "light" else "logo black.png"
-
 # Центрирование логотипа
 col1, col2, col3 = st.columns([1, 2, 1])  # Создаём три колонки, центральная шире
 with col2:
-    st.image(logo_file, width=533)  # Размер логотипа 533x300 пикселей
+    st.image("logo.png", width=533)  # Размер логотипа 533x300 пикселей
 
 # Функция для расчёта расстояния по прямой (Haversine)
 def haversine(lat1, lon1, lat2, lon2):
@@ -348,19 +282,6 @@ else:
         # Показываем версии библиотек
         st.write(f"Версия Streamlit: {st.__version__}")
         st.write(f"Версия aiohttp: {aiohttp.__version__}")
-        # Показываем текущую тему и результат JavaScript
-        st.write(f"Текущая тема Streamlit: {theme}")
-        st.write(f"JavaScript theme result: {st.session_state.get('js_theme_result', 'None')}")
-        if 'js_theme_error' in st.session_state:
-            st.write(f"Ошибка JavaScript: {st.session_state.js_theme_error}")
-        # Ручное переключение темы для тестирования
-        theme_override = st.selectbox("Выберите тему для теста (админ)", ["light", "dark"], key="theme_override")
-        if theme_override != theme:
-            st.session_state.theme = theme_override
-            try:
-                st.rerun()
-            except Exception as e:
-                st.error(f"Ошибка при вызове st.rerun() в ручном переключении темы: {e}")
         if not routing_api_key:
             st.warning("ORS_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.3.")
         else:
