@@ -128,9 +128,17 @@ def save_cache(cache):
             # Настраиваем Git
             subprocess.run(['git', 'config', '--global', 'user.name', os.environ.get('GIT_USER', 'floratvertransport-prog')], check=True)
             subprocess.run(['git', 'config', '--global', 'user.email', 'floratvertransport-prog@example.com'], check=True)
-            # Проверяем текущий remote
+            # Проверяем текущий remote и ветку
             remote_output = subprocess.run(['git', 'remote', '-v'], capture_output=True, text=True, check=True)
             st.session_state.git_remote_status = f"Git remote: {remote_output.stdout}"
+            branch_output = subprocess.run(['git', 'branch'], capture_output=True, text=True, check=True)
+            st.session_state.git_branch_status = f"Git branch: {branch_output.stdout}"
+            # Синхронизируем ветку main
+            try:
+                subprocess.run(['git', 'pull', 'origin', 'main', '--allow-unrelated-histories'], check=True)
+            except subprocess.CalledProcessError as e:
+                st.session_state.git_sync_status = f"Ошибка git pull: {e}\nSTDERR: {e.stderr}"
+                return
             # Проверяем изменения
             result = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True, check=True)
             st.session_state.git_status = f"Git status: {result.stdout}"
@@ -346,6 +354,8 @@ else:
             st.write(f"Статус синхронизации с GitHub: {st.session_state.git_sync_status}")
         if 'git_remote_status' in st.session_state:
             st.write(st.session_state.git_remote_status)
+        if 'git_branch_status' in st.session_state:
+            st.write(st.session_state.git_branch_status)
         if 'git_status' in st.session_state:
             st.write(st.session_state.git_status)
         if not routing_api_key:
