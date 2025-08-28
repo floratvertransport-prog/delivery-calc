@@ -11,29 +11,38 @@ from streamlit_javascript import st_javascript
 # Установка заголовка вкладки
 st.set_page_config(page_title="Флора калькулятор (розница)")
 
-# JavaScript для определения темы
+# JavaScript для определения темы с задержкой и отладкой
 theme_js = """
 <script>
     function getTheme() {
-        // Проверяем атрибут data-theme в Streamlit
-        const streamlitTheme = document.documentElement.getAttribute("data-theme") || 
-                             (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-        console.log("Streamlit theme detected: ", streamlitTheme); // Отладка в консоли
-        return streamlitTheme;
+        // Ждём полной загрузки страницы
+        window.addEventListener('load', () => {
+            // Проверяем атрибут data-theme
+            const streamlitTheme = document.documentElement.getAttribute("data-theme") || 
+                                 (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+            console.log("Streamlit theme detected: ", streamlitTheme);
+            // Проверяем CSS-класс для тёмной темы
+            const isDark = document.body.classList.contains("stThemeDark");
+            console.log("CSS class stThemeDark present: ", isDark);
+            const finalTheme = isDark ? "dark" : streamlitTheme;
+            console.log("Final theme set: ", finalTheme);
+            localStorage.setItem("streamlit_theme", finalTheme);
+        });
     }
-    // Сохраняем тему в localStorage
-    localStorage.setItem("streamlit_theme", getTheme());
+    // Вызываем getTheme с задержкой
+    setTimeout(getTheme, 1000); // Задержка 1 секунда
     // Слушаем изменения системной темы
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", e => {
         const newTheme = e.matches ? "dark" : "light";
-        console.log("System theme changed to: ", newTheme); // Отладка
+        console.log("System theme changed to: ", newTheme);
         localStorage.setItem("streamlit_theme", newTheme);
     });
     // Слушаем изменения атрибута data-theme
     const observer = new MutationObserver(() => {
-        const newTheme = getTheme();
-        console.log("Streamlit data-theme changed to: ", newTheme); // Отладка
-        localStorage.setItem("streamlit_theme", newTheme);
+        const streamlitTheme = document.documentElement.getAttribute("data-theme") || 
+                              (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        console.log("Streamlit data-theme changed to: ", streamlitTheme);
+        localStorage.setItem("streamlit_theme", streamlitTheme);
     });
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 </script>
@@ -45,10 +54,15 @@ theme = st.session_state.get("theme", "light")  # По умолчанию све
 # Проверяем localStorage через JavaScript
 try:
     js_theme = st_javascript("return localStorage.getItem('streamlit_theme')")
+    st.session_state.js_theme_result = js_theme  # Сохраняем для отладки
     if js_theme in ["light", "dark"]:
         theme = js_theme
+    else:
+        # Резервное определение через CSS-класс
+        css_theme = st_javascript("return document.body.classList.contains('stThemeDark') ? 'dark' : 'light'")
+        theme = css_theme if css_theme in ["light", "dark"] else "light"
 except Exception as e:
-    st.warning(f"Ошибка JavaScript при получении темы: {e}")
+    st.session_state.js_theme_error = str(e)  # Сохраняем ошибку для отладки
     theme = "light"  # Резервный вариант
 
 # Сохраняем тему в session_state и обновляем при изменении
@@ -331,10 +345,14 @@ else:
         # Показываем IP сервера
         server_ip = asyncio.run(get_server_ip())
         st.write(f"IP сервера Render: {server_ip}")
-        # Показываем версию aiohttp для диагностики
+        # Показываем версии библиотек
+        st.write(f"Версия Streamlit: {st.__version__}")
         st.write(f"Версия aiohttp: {aiohttp.__version__}")
-        # Показываем текущую тему для диагностики
+        # Показываем текущую тему и результат JavaScript
         st.write(f"Текущая тема Streamlit: {theme}")
+        st.write(f"JavaScript theme result: {st.session_state.get('js_theme_result', 'None')}")
+        if 'js_theme_error' in st.session_state:
+            st.write(f"Ошибка JavaScript: {st.session_state.js_theme_error}")
         # Ручное переключение темы для тестирования
         theme_override = st.selectbox("Выберите тему для теста (админ)", ["light", "dark"], key="theme_override")
         if theme_override != theme:
