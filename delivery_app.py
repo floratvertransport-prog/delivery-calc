@@ -6,7 +6,7 @@ import asyncio
 import aiohttp
 import json
 
-# Функция для расчёта расстояния по прямой (Haversine)
+# Функция для расчёта расстояния по прямой (Haversine, для определения направления)
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
     lat1_rad = math.radians(lat1)
@@ -23,7 +23,7 @@ def haversine(lat1, lon1, lat2, lon2):
     distance = R * c
     return distance
 
-# Точки выхода из Твери
+# Точки выхода из Твери (координаты административной границы)
 exit_points = [
     (36.055364, 56.795587),  # Направление: Клин, Редкино, Мокшино, Новозавидовский, Конаково
     (35.871802, 56.808677),  # Направление: Волоколамск, Лотошино, Руза, Шаховская
@@ -33,7 +33,7 @@ exit_points = [
     (35.932805, 56.902966)   # Направление: Сонково, Сандово, Лесное, Максатиха, Рамешки, Весьегонск, Калязин, Кесова Гора, Красный Холм, Бежецк, Кашин
 ]
 
-# Таблица расстояний (туда и обратно, км)
+# Таблица расстояний (туда и обратно, км) как запасной вариант
 distance_table = {
     'Клин': {'distance': 140, 'exit_point': (36.055364, 56.795587)},
     'Редкино': {'distance': 60, 'exit_point': (36.055364, 56.795587)},
@@ -101,7 +101,7 @@ def save_cache(cache):
 def geocode_address(address, api_key):
     url = f"https://geocode-maps.yandex.ru/1.x/?apikey={api_key}&geocode={address}&format=json"
     response = requests.get(url)
-    if response.status_code == 200:
+    if response.status == 200:
         data = response.json()
         try:
             pos = data['response']['GeoObjectCollection']['featureMember'][0]['GeoObject']['Point']['pos']
@@ -149,9 +149,7 @@ async def get_road_distance_ors(start_lon, start_lat, end_lon, end_lat, api_key)
                     error_data = await response.json()
                     error_code = error_data.get("error", {}).get("code", 0)
                     error_msg = error_data.get("error", {}).get("message", "Неизвестная ошибка")
-                    if error_code == 2010:  # Ошибка "Could not find routable point"
-                        raise ValueError(f"ORS не нашёл маршрут для координат: {error_msg}. Используется Haversine.")
-                    raise ValueError(f"Ошибка ORS API: HTTP {response.status}. Ответ сервера: {error_msg}")
+                    raise ValueError(f"Ошибка ORS API: HTTP {response.status}. Код: {error_code}. Сообщение: {error_msg}")
     except aiohttp.ClientError as e:
         raise ValueError(f"Ошибка соединения с ORS API: {str(e)}")
 
@@ -228,7 +226,7 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
                 cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
                 save_cache(cache)
             return round(base_cost + extra_cost, 2), dist_to_exit, nearest_exit, locality, total_distance, "haversine"
-    else:
+else:
         # Если ключ не настроен, используем Haversine с коэффициентом 1.3
         road_distance = dist_to_exit * 1.3
         total_distance = road_distance * 2
@@ -248,7 +246,7 @@ if not api_key:
     st.error("Ошибка: API-ключ для геокодирования не настроен. Обратитесь к администратору.")
 else:
     cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
-    address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')")
+    address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
     admin_password = st.text_input("Админ пароль для отладки (оставьте пустым для обычного режима)", type="password")
 
     if admin_password == "admin123":  # Измените пароль на свой
@@ -275,7 +273,18 @@ else:
                 # Оборачиваем асинхронный вызов
                 result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key))
                 cost, dist_to_exit, nearest_exit, locality, total_distance, source = result
-                st.success(f"Стоимость доставки: {cost} руб.")
+                # Округление суммы, если добавляется километраж
+                if total_distance > 0:
+                    extra_cost = total_distance * rate_per_km
+                    total_cost = base_cost + extra_cost
+                    remainder = total_cost % 100
+                    if remainder <= 20:
+                        total_cost = (total_cost // 100) * 100
+                    else:
+                        total_cost = ((total_cost // 100) + 1) * 100
+                else:
+                    total_cost = cost
+                st.success(f"Стоимость доставки: {total_cost} руб.")
                 if admin_password == "admin123":
                     st.write(f"Координаты адреса: lat={dest_lat}, lon={dest_lon}")
                     st.write(f"Ближайшая точка выхода: {nearest_exit}")
