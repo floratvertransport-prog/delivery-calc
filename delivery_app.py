@@ -5,16 +5,47 @@ import os
 import asyncio
 import aiohttp
 import json
+import streamlit.components.v1 as components
 
 # Установка заголовка вкладки
 st.set_page_config(page_title="Флора калькулятор (розница)")
 
+# JavaScript для определения темы
+theme_js = """
+<script>
+    function getTheme() {
+        // Проверяем атрибут data-theme в Streamlit
+        const streamlitTheme = document.documentElement.getAttribute("data-theme") || 
+                             (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        return streamlitTheme;
+    }
+    // Сохраняем тему в localStorage для доступа Streamlit
+    localStorage.setItem("streamlit_theme", getTheme());
+    // Слушаем изменения темы
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", e => {
+        localStorage.setItem("streamlit_theme", e.matches ? "dark" : "light");
+    });
+    // Слушаем изменения атрибута data-theme
+    const observer = new MutationObserver(() => {
+        localStorage.setItem("streamlit_theme", getTheme());
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+</script>
+"""
+components.html(theme_js, height=0, width=0)
+
 # Определение темы и выбор логотипа
-theme = st.get_option("theme.base") or "light"  # По умолчанию светлая
-if "theme" not in st.session_state:
-    st.session_state.theme = theme
-elif st.session_state.theme != theme:
-    # Если тема изменилась, обновляем и перезапускаем приложение
+theme = st.session_state.get("theme", "light")  # По умолчанию светлая
+# Проверяем localStorage через JavaScript
+try:
+    js_theme = st_javascript("return localStorage.getItem('streamlit_theme')")
+    if js_theme in ["light", "dark"]:
+        theme = js_theme
+except Exception:
+    theme = "light"  # Резервный вариант
+
+# Сохраняем тему в session_state и обновляем при изменении
+if st.session_state.get("theme") != theme:
     st.session_state.theme = theme
     st.experimental_rerun()
 
