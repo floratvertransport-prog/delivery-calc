@@ -5,12 +5,30 @@ import os
 import asyncio
 import aiohttp
 import json
+import streamlit.components.v1 as components
 
 # Установка заголовка вкладки
 st.set_page_config(page_title="Флора калькулятор (розница)")
 
+# JavaScript для определения темы пользователя
+theme_js = """
+<script>
+    const theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    window.__streamlitTheme = theme;
+</script>
+"""
+components.html(theme_js, height=0, width=0)
+
 # Определение темы и выбор логотипа
-theme = st.get_option("theme.base")  # "light" или "dark"
+try:
+    # Проверяем тему через JavaScript
+    theme = st.session_state.get("theme", "light")  # По умолчанию светлая
+    if "theme" not in st.session_state:
+        # Если тема ещё не определена, используем st.get_option как резервный вариант
+        theme = st.get_option("theme.base") or "light"
+except Exception:
+    theme = "light"  # Резервный вариант, если оба метода не работают
+
 logo_file = "logo white.png" if theme == "light" else "logo black.png"
 
 # Центрирование логотипа
@@ -285,6 +303,8 @@ else:
         st.write(f"IP сервера Render: {server_ip}")
         # Показываем версию aiohttp для диагностики
         st.write(f"Версия aiohttp: {aiohttp.__version__}")
+        # Показываем текущую тему для диагностики
+        st.write(f"Текущая тема Streamlit: {theme}")
         if not routing_api_key:
             st.warning("ORS_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.3.")
         else:
