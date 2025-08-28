@@ -106,7 +106,7 @@ def load_cache():
 def save_cache(cache):
     cache_file = 'cache.json'
     try:
-        # Отладка: выводим содержимое кэша перед сохранением
+        # Отладка: сохраняем кэш в session_state
         st.session_state.cache_before_save = cache
         with open(cache_file, 'w', encoding='utf-8') as f:
             json.dump(cache, f, ensure_ascii=False, indent=2)
@@ -115,14 +115,28 @@ def save_cache(cache):
             with open(cache_file, 'r', encoding='utf-8') as f:
                 saved_cache = json.load(f)
                 st.session_state.cache_after_save = saved_cache
-        # Пытаемся синхронизировать с GitHub
+        # Настройка Git
         try:
-            subprocess.run(['git', 'add', cache_file], check=True)
-            subprocess.run(['git', 'commit', '-m', 'Update cache.json'], check=True)
-            subprocess.run(['git', 'push'], check=True)
-            st.session_state.git_sync_status = "Кэш успешно синхронизирован с GitHub"
+            subprocess.run(['git', 'config', '--global', 'user.name', os.environ.get('GIT_USER', 'floratvertransport-prog')], check=True)
+            subprocess.run(['git', 'config', '--global', 'user.email', 'floratvertransport-prog@example.com'], check=True)
+            # Проверяем изменения
+            result = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True, check=True)
+            if cache_file in result.stdout:
+                subprocess.run(['git', 'add', cache_file], check=True)
+                subprocess.run(['git', 'commit', '-m', 'Update cache.json'], check=True)
+                # Настройка удалённого репозитория
+                git_token = os.environ.get('GIT_TOKEN')
+                git_repo = os.environ.get('GIT_REPO', 'https://github.com/floratvertransport-prog/delivery-calc.git')
+                if git_token:
+                    git_repo = git_repo.replace('https://', f'https://{git_token}@')
+                subprocess.run(['git', 'remote', 'set-url', 'origin', git_repo], check=True)
+                subprocess.run(['git', 'push'], check=True)
+                st.session_state.git_sync_status = "Кэш успешно синхронизирован с GitHub"
+            else:
+                st.session_state.git_sync_status = "Нет изменений в cache.json для коммита"
         except subprocess.CalledProcessError as e:
-            st.session_state.git_sync_status = f"Ошибка синхронизации кэша с GitHub: {e}"
+            error_message = f"Ошибка синхронизации с GitHub: {e}\nSTDERR: {e.stderr}"
+            st.session_state.git_sync_status = error_message
     except Exception as e:
         st.session_state.save_cache_error = f"Ошибка при сохранении кэша: {e}"
 
@@ -228,11 +242,17 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
     
     base_cost = cargo_prices[cargo_size]
     
-    # Расчёт расстояния всегда
+    # Расчёт расстояния
     nearest_exit, dist_to_exit = find_nearest_exit_point(dest_lat, dest_lon)
     locality = extract_locality(address)
-    # Отладка: сохраняем locality для вывода
     st.session_state.locality = locality
+    
+    # Если адрес в Твери, расстояние = 0
+    if locality and locality.lower() == 'тверь':
+        total_distance = 0
+        total_cost = base_cost
+        rounded_cost = round_cost(total_cost)
+        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "город"
     
     if locality and locality in distance_table:
         total_distance = distance_table[locality]['distance']
@@ -339,7 +359,11 @@ else:
                     st.write(f"Расстояние до ближайшей точки выхода (по прямой): {dist_to_exit:.2f} км")
                     st.write(f"Извлечённый населённый пункт: {locality}")
                     st.write(f"Источник расстояния: {source}")
-                    if source == "таблица":
+                    if source == "город":
+                        st.write(f"Населённый пункт: {locality} (доставка в пределах Твери)")
+                        st.write(f"Километраж: {total_distance} км (без доплаты)")
+                        st.write(f"Базовая стоимость: {base_cost} руб.")
+                    elif source == "таблица":
                         st.write(f"Населённый пункт из таблицы: {locality}")
                         st.write(f"Километраж из таблицы (туда и обратно): {total_distance} км")
                         st.write(f"Доплата: {total_distance} × 32 = {total_distance * 32} руб.")
