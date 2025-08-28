@@ -6,11 +6,13 @@ import asyncio
 import aiohttp
 import json
 
+# Установка заголовка вкладки
 st.set_page_config(page_title="Флора Тверь калькулятор")
 
+# Отображение логотипа
 st.image("logo.png", width=200)
 
-# Функция для расчёта расстояния по прямой (Haversine, для определения направления)
+# Функция для расчёта расстояния по прямой (Haversine)
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
     lat1_rad = math.radians(lat1)
@@ -27,7 +29,7 @@ def haversine(lat1, lon1, lat2, lon2):
     distance = R * c
     return distance
 
-# Точки выхода из Твери (координаты административной границы)
+# Точки выхода из Твери
 exit_points = [
     (36.055364, 56.795587),  # Направление: Клин, Редкино, Мокшино, Новозавидовский, Конаково
     (35.871802, 56.808677),  # Направление: Волоколамск, Лотошино, Руза, Шаховская
@@ -37,7 +39,7 @@ exit_points = [
     (35.932805, 56.902966)   # Направление: Сонково, Сандово, Лесное, Максатиха, Рамешки, Весьегонск, Калязин, Кесова Гора, Красный Холм, Бежецк, Кашин
 ]
 
-# Таблица расстояний (туда и обратно, км) как запасной вариант
+# Таблица расстояний (туда и обратно, км)
 distance_table = {
     'Клин': {'distance': 140, 'exit_point': (36.055364, 56.795587)},
     'Редкино': {'distance': 60, 'exit_point': (36.055364, 56.795587)},
@@ -105,7 +107,7 @@ def save_cache(cache):
 def geocode_address(address, api_key):
     url = f"https://geocode-maps.yandex.ru/1.x/?apikey={api_key}&geocode={address}&format=json"
     response = requests.get(url)
-    if response.status == 200:
+    if response.status_code == 200:
         data = response.json()
         try:
             pos = data['response']['GeoObjectCollection']['featureMember'][0]['GeoObject']['Point']['pos']
@@ -116,18 +118,20 @@ def geocode_address(address, api_key):
     else:
         raise ValueError(f"Ошибка API: {response.status_code}")
 
-# Получение IP сервера Render
+# Получение IP сервера Render (переписано с улучшенной обработкой ошибок)
 async def get_server_ip():
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get('https://api.ipify.org?format=json') as resp:
-                if resp.status == 200:
-                    ip_data = await resp.json()
-                    return ip_data['ip']
+            async with session.get('https://api.ipify.org?format=json', timeout=5) as response:
+                if response.status == 200:
+                    ip_data = await response.json()
+                    return ip_data.get('ip', 'Не удалось получить IP')
                 else:
-                    return f"Ошибка получения IP: HTTP {resp.status}"
+                    return f"Ошибка получения IP: HTTP {response.status}"
     except aiohttp.ClientError as e:
         return f"Ошибка соединения при получении IP: {str(e)}"
+    except Exception as e:
+        return f"Неизвестная ошибка при получении IP: {str(e)}"
 
 # Асинхронный запрос к OpenRouteService для дорожного расстояния
 async def get_road_distance_ors(start_lon, start_lat, end_lon, end_lat, api_key):
@@ -210,7 +214,7 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
         extra_cost = total_distance * rate_per_km
         total_cost = base_cost + extra_cost
         rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
-        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "table"
+        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "таблица"
     
     cache = load_cache()
     if locality and locality in cache:
@@ -273,6 +277,8 @@ else:
         # Показываем IP сервера
         server_ip = asyncio.run(get_server_ip())
         st.write(f"IP сервера Render: {server_ip}")
+        # Показываем версию aiohttp для диагностики
+        st.write(f"Версия aiohttp: {aiohttp.__version__}")
         if not routing_api_key:
             st.warning("ORS_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.3.")
         else:
@@ -296,11 +302,11 @@ else:
                     st.write(f"Ближайшая точка выхода: {nearest_exit}")
                     st.write(f"Расстояние до ближайшей точки выхода (по прямой): {dist_to_exit:.2f} км")
                     st.write(f"Источник расстояния: {source}")
-                    if source == "table":
+                    if source == "таблица":
                         st.write(f"Населённый пункт из таблицы: {locality}")
                         st.write(f"Километраж из таблицы (туда и обратно): {total_distance} км")
                         st.write(f"Доплата: {total_distance} × 32 = {total_distance * 32} руб.")
-                    elif source == "cache":
+                    elif source == "кэш":
                         st.write(f"Населённый пункт из кэша: {locality}")
                         st.write(f"Километраж из кэша (туда и обратно): {total_distance} км")
                         st.write(f"Доплата: {total_distance} × 32 = {total_distance * 32} руб.")
