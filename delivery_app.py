@@ -7,10 +7,10 @@ import aiohttp
 import json
 
 # Установка заголовка вкладки
-st.set_page_config(page_title="Флора Тверь калькулятор")
+st.set_page_config(page_title="Флора калькулятор (розница)")
 
 # Отображение логотипа
-st.image("logo.png", width=200)
+st.image("logo.png", width=300)
 
 # Функция для расчёта расстояния по прямой (Haversine)
 def haversine(lat1, lon1, lat2, lon2):
