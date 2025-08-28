@@ -117,20 +117,27 @@ def save_cache(cache):
                 st.session_state.cache_after_save = saved_cache
         # Настройка Git
         try:
+            # Проверяем наличие .git
+            if not os.path.exists('.git'):
+                subprocess.run(['git', 'init'], check=True)
+                git_repo = os.environ.get('GIT_REPO', 'https://github.com/floratvertransport-prog/delivery-calc.git')
+                git_token = os.environ.get('GIT_TOKEN')
+                if git_token:
+                    git_repo = git_repo.replace('https://', f'https://{git_token}@')
+                subprocess.run(['git', 'remote', 'add', 'origin', git_repo], check=True)
+            # Настраиваем Git
             subprocess.run(['git', 'config', '--global', 'user.name', os.environ.get('GIT_USER', 'floratvertransport-prog')], check=True)
             subprocess.run(['git', 'config', '--global', 'user.email', 'floratvertransport-prog@example.com'], check=True)
+            # Проверяем текущий remote
+            remote_output = subprocess.run(['git', 'remote', '-v'], capture_output=True, text=True, check=True)
+            st.session_state.git_remote_status = f"Git remote: {remote_output.stdout}"
             # Проверяем изменения
             result = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True, check=True)
+            st.session_state.git_status = f"Git status: {result.stdout}"
             if cache_file in result.stdout:
                 subprocess.run(['git', 'add', cache_file], check=True)
                 subprocess.run(['git', 'commit', '-m', 'Update cache.json'], check=True)
-                # Настройка удалённого репозитория
-                git_token = os.environ.get('GIT_TOKEN')
-                git_repo = os.environ.get('GIT_REPO', 'https://github.com/floratvertransport-prog/delivery-calc.git')
-                if git_token:
-                    git_repo = git_repo.replace('https://', f'https://{git_token}@')
-                subprocess.run(['git', 'remote', 'set-url', 'origin', git_repo], check=True)
-                subprocess.run(['git', 'push'], check=True)
+                subprocess.run(['git', 'push', 'origin', 'main'], check=True)
                 st.session_state.git_sync_status = "Кэш успешно синхронизирован с GitHub"
             else:
                 st.session_state.git_sync_status = "Нет изменений в cache.json для коммита"
@@ -213,6 +220,8 @@ def find_nearest_exit_point(dest_lat, dest_lon):
 
 # Извлечение населённого пункта из адреса
 def extract_locality(address):
+    if 'тверь' in address.lower():
+        return 'Тверь'
     for locality in distance_table.keys():
         if locality.lower() in address.lower():
             return locality
@@ -247,12 +256,11 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
     locality = extract_locality(address)
     st.session_state.locality = locality
     
-    # Если адрес в Твери, расстояние = 0
+    # Если адрес в Твери, возвращаем базовую стоимость без округления
     if locality and locality.lower() == 'тверь':
         total_distance = 0
         total_cost = base_cost
-        rounded_cost = round_cost(total_cost)
-        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "город"
+        return total_cost, dist_to_exit, nearest_exit, locality, total_distance, "город"
     
     if locality and locality in distance_table:
         total_distance = distance_table[locality]['distance']
@@ -336,6 +344,10 @@ else:
             st.write(f"Ошибка сохранения кэша: {st.session_state.save_cache_error}")
         if 'git_sync_status' in st.session_state:
             st.write(f"Статус синхронизации с GitHub: {st.session_state.git_sync_status}")
+        if 'git_remote_status' in st.session_state:
+            st.write(st.session_state.git_remote_status)
+        if 'git_status' in st.session_state:
+            st.write(st.session_state.git_status)
         if not routing_api_key:
             st.warning("ORS_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.3.")
         else:
@@ -362,7 +374,7 @@ else:
                     if source == "город":
                         st.write(f"Населённый пункт: {locality} (доставка в пределах Твери)")
                         st.write(f"Километраж: {total_distance} км (без доплаты)")
-                        st.write(f"Базовая стоимость: {base_cost} руб.")
+                        st.write(f"Базовая стоимость: {cost} руб. (без округления)")
                     elif source == "таблица":
                         st.write(f"Населённый пункт из таблицы: {locality}")
                         st.write(f"Километраж из таблицы (туда и обратно): {total_distance} км")
@@ -383,5 +395,3 @@ else:
                 st.error(f"Ошибка: {e}")
             except Exception as e:
                 st.error(f"Ошибка при расчёте: {e}")
-        else:
-            st.warning("Введите адрес.")
