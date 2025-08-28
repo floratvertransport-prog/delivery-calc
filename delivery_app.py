@@ -9,8 +9,14 @@ import json
 # Установка заголовка вкладки
 st.set_page_config(page_title="Флора калькулятор (розница)")
 
-# Отображение логотипа
-st.image("logo.png", width=300)
+# Определение темы и выбор логотипа
+theme = st.get_option("theme.base")  # "light" или "dark"
+logo_file = "logo white.png" if theme == "light" else "logo black.png"
+
+# Центрирование логотипа
+col1, col2, col3 = st.columns([1, 2, 1])  # Создаём три колонки, центральная шире
+with col2:
+    st.image(logo_file, width=533)  # Размер логотипа 533x300 пикселей
 
 # Функция для расчёта расстояния по прямой (Haversine)
 def haversine(lat1, lon1, lat2, lon2):
@@ -118,7 +124,7 @@ def geocode_address(address, api_key):
     else:
         raise ValueError(f"Ошибка API: {response.status_code}")
 
-# Получение IP сервера Render (переписано с улучшенной обработкой ошибок)
+# Получение IP сервера Render
 async def get_server_ip():
     try:
         async with aiohttp.ClientSession() as session:
