@@ -6,6 +6,7 @@ import asyncio
 import aiohttp
 import json
 import streamlit.components.v1 as components
+from streamlit_javascript import st_javascript
 
 # Установка заголовка вкладки
 st.set_page_config(page_title="Флора калькулятор (розница)")
@@ -17,17 +18,22 @@ theme_js = """
         // Проверяем атрибут data-theme в Streamlit
         const streamlitTheme = document.documentElement.getAttribute("data-theme") || 
                              (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        console.log("Streamlit theme detected: ", streamlitTheme); // Отладка в консоли
         return streamlitTheme;
     }
-    // Сохраняем тему в localStorage для доступа Streamlit
+    // Сохраняем тему в localStorage
     localStorage.setItem("streamlit_theme", getTheme());
-    // Слушаем изменения темы
+    // Слушаем изменения системной темы
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", e => {
-        localStorage.setItem("streamlit_theme", e.matches ? "dark" : "light");
+        const newTheme = e.matches ? "dark" : "light";
+        console.log("System theme changed to: ", newTheme); // Отладка
+        localStorage.setItem("streamlit_theme", newTheme);
     });
     // Слушаем изменения атрибута data-theme
     const observer = new MutationObserver(() => {
-        localStorage.setItem("streamlit_theme", getTheme());
+        const newTheme = getTheme();
+        console.log("Streamlit data-theme changed to: ", newTheme); // Отладка
+        localStorage.setItem("streamlit_theme", newTheme);
     });
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 </script>
@@ -41,13 +47,17 @@ try:
     js_theme = st_javascript("return localStorage.getItem('streamlit_theme')")
     if js_theme in ["light", "dark"]:
         theme = js_theme
-except Exception:
+except Exception as e:
+    st.warning(f"Ошибка JavaScript при получении темы: {e}")
     theme = "light"  # Резервный вариант
 
 # Сохраняем тему в session_state и обновляем при изменении
 if st.session_state.get("theme") != theme:
     st.session_state.theme = theme
-    st.experimental_rerun()
+    try:
+        st.rerun()
+    except Exception as e:
+        st.error(f"Ошибка при вызове st.rerun(): {e}")
 
 logo_file = "logo white.png" if theme == "light" else "logo black.png"
 
@@ -325,6 +335,14 @@ else:
         st.write(f"Версия aiohttp: {aiohttp.__version__}")
         # Показываем текущую тему для диагностики
         st.write(f"Текущая тема Streamlit: {theme}")
+        # Ручное переключение темы для тестирования
+        theme_override = st.selectbox("Выберите тему для теста (админ)", ["light", "dark"], key="theme_override")
+        if theme_override != theme:
+            st.session_state.theme = theme_override
+            try:
+                st.rerun()
+            except Exception as e:
+                st.error(f"Ошибка при вызове st.rerun() в ручном переключении темы: {e}")
         if not routing_api_key:
             st.warning("ORS_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.3.")
         else:
