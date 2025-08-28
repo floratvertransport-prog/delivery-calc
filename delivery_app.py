@@ -6,7 +6,7 @@ import asyncio
 import aiohttp
 import json
 
-# Функция для расчёта расстояния по прямой (Haversine, для определения направления)
+# Функция для расчёта расстояния по прямой (Haversine)
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
     lat1_rad = math.radians(lat1)
@@ -23,7 +23,7 @@ def haversine(lat1, lon1, lat2, lon2):
     distance = R * c
     return distance
 
-# Точки выхода из Твери (координаты административной границы)
+# Точки выхода из Твери
 exit_points = [
     (36.055364, 56.795587),  # Направление: Клин, Редкино, Мокшино, Новозавидовский, Конаково
     (35.871802, 56.808677),  # Направление: Волоколамск, Лотошино, Руза, Шаховская
@@ -33,7 +33,7 @@ exit_points = [
     (35.932805, 56.902966)   # Направление: Сонково, Сандово, Лесное, Максатиха, Рамешки, Весьегонск, Калязин, Кесова Гора, Красный Холм, Бежецк, Кашин
 ]
 
-# Таблица расстояний (туда и обратно, км) как запасной вариант
+# Таблица расстояний (туда и обратно, км)
 distance_table = {
     'Клин': {'distance': 140, 'exit_point': (36.055364, 56.795587)},
     'Редкино': {'distance': 60, 'exit_point': (36.055364, 56.795587)},
@@ -101,7 +101,7 @@ def save_cache(cache):
 def geocode_address(address, api_key):
     url = f"https://geocode-maps.yandex.ru/1.x/?apikey={api_key}&geocode={address}&format=json"
     response = requests.get(url)
-    if response.status == 200:
+    if response.status_code == 200:
         data = response.json()
         try:
             pos = data['response']['GeoObjectCollection']['featureMember'][0]['GeoObject']['Point']['pos']
@@ -149,6 +149,8 @@ async def get_road_distance_ors(start_lon, start_lat, end_lon, end_lat, api_key)
                     error_data = await response.json()
                     error_code = error_data.get("error", {}).get("code", 0)
                     error_msg = error_data.get("error", {}).get("message", "Неизвестная ошибка")
+                    if error_code == 2010:  # Ошибка "Could not find routable point"
+                        raise ValueError(f"ORS не нашёл маршрут для координат: {error_msg}. Используется Haversine.")
                     raise ValueError(f"Ошибка ORS API: HTTP {response.status}. Код: {error_code}. Сообщение: {error_msg}")
     except aiohttp.ClientError as e:
         raise ValueError(f"Ошибка соединения с ORS API: {str(e)}")
@@ -180,6 +182,14 @@ def extract_locality(address):
             return part
     return None
 
+# Функция округления стоимости
+def round_cost(cost):
+    remainder = cost % 100
+    if remainder <= 20:
+        return (cost // 100) * 100
+    else:
+        return ((cost // 100) + 1) * 100
+
 # Расчёт стоимости
 async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key):
     if cargo_size not in cargo_prices:
@@ -187,24 +197,25 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
     
     base_cost = cargo_prices[cargo_size]
     
-    # Проверяем, внутри ли адрес Твери (если расстояние до ближайшей точки выхода < 5 км)
-    nearest_exit, dist_to_exit = find_nearest_exit_point(dest_lat, dest_lon)
-    if dist_to_exit < 5:  # Порог для "внутри Твери"
-        return base_cost, dist_to_exit, nearest_exit, None, 0, "inside_tver"
-    
     # Проверяем таблицу расстояний
     locality = extract_locality(address)
+    nearest_exit, dist_to_exit = find_nearest_exit_point(dest_lat, dest_lon)
+    
     if locality and locality in distance_table:
         total_distance = distance_table[locality]['distance']
         extra_cost = total_distance * rate_per_km
-        return round(base_cost + extra_cost, 2), dist_to_exit, nearest_exit, locality, total_distance, "table"
+        total_cost = base_cost + extra_cost
+        rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
+        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "table"
     
     # Проверяем кэш
     cache = load_cache()
     if locality and locality in cache:
         total_distance = cache[locality]['distance']
         extra_cost = total_distance * rate_per_km
-        return round(base_cost + extra_cost, 2), dist_to_exit, nearest_exit, locality, total_distance, "cache"
+        total_cost = base_cost + extra_cost
+        rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
+        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "cache"
     
     # Используем OpenRouteService для дорожного расстояния
     if routing_api_key and locality:
@@ -212,29 +223,35 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
             road_distance = await get_road_distance_ors(nearest_exit[0], nearest_exit[1], dest_lon, dest_lat, routing_api_key)
             total_distance = road_distance * 2  # Туда и обратно
             extra_cost = total_distance * rate_per_km
+            total_cost = base_cost + extra_cost
+            rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
             # Сохраняем в кэш
             cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
             save_cache(cache)
-            return round(base_cost + extra_cost, 2), dist_to_exit, nearest_exit, locality, total_distance, "ors"
+            return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "ors"
         except ValueError as e:
             st.warning(f"Ошибка ORS API: {e}. Используется Haversine с коэффициентом 1.3.")
             # Падение на Haversine с коэффициентом 1.3
             road_distance = dist_to_exit * 1.3
             total_distance = road_distance * 2
             extra_cost = total_distance * rate_per_km
+            total_cost = base_cost + extra_cost
+            rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
             if locality:
                 cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
                 save_cache(cache)
-            return round(base_cost + extra_cost, 2), dist_to_exit, nearest_exit, locality, total_distance, "haversine"
-else:
-        # Если ключ не настроен, используем Haversine с коэффициентом 1.3
-        road_distance = dist_to_exit * 1.3
-        total_distance = road_distance * 2
-        extra_cost = total_distance * rate_per_km
-        if locality:
-            cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
-            save_cache(cache)
-        return round(base_cost + extra_cost, 2), dist_to_exit, nearest_exit, locality, total_distance, "haversine"
+            return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "haversine"
+    
+    # Если ключ не настроен, используем Haversine с коэффициентом 1.3
+    road_distance = dist_to_exit * 1.3
+    total_distance = road_distance * 2
+    extra_cost = total_distance * rate_per_km
+    total_cost = base_cost + extra_cost
+    rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
+    if locality:
+        cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
+        save_cache(cache)
+    return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "haversine"
 
 # Streamlit UI
 st.title("Калькулятор стоимости доставки по Твери")
@@ -273,23 +290,11 @@ else:
                 # Оборачиваем асинхронный вызов
                 result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key))
                 cost, dist_to_exit, nearest_exit, locality, total_distance, source = result
-                # Округление суммы, если добавляется километраж
-                if total_distance > 0:
-                    extra_cost = total_distance * rate_per_km
-                    total_cost = base_cost + extra_cost
-                    remainder = total_cost % 100
-                    if remainder <= 20:
-                        total_cost = (total_cost // 100) * 100
-                    else:
-                        total_cost = ((total_cost // 100) + 1) * 100
-                else:
-                    total_cost = cost
-                st.success(f"Стоимость доставки: {total_cost} руб.")
+                st.success(f"Стоимость доставки: {cost} руб.")
                 if admin_password == "admin123":
                     st.write(f"Координаты адреса: lat={dest_lat}, lon={dest_lon}")
                     st.write(f"Ближайшая точка выхода: {nearest_exit}")
                     st.write(f"Расстояние до ближайшей точки выхода (по прямой): {dist_to_exit:.2f} км")
-                    st.write(f"Адрес внутри Твери: {dist_to_exit < 5}")
                     st.write(f"Источник расстояния: {source}")
                     if source == "table":
                         st.write(f"Населённый пункт из таблицы: {locality}")
@@ -307,8 +312,6 @@ else:
                         st.write(f"Населённый пункт: {locality}")
                         st.write(f"Километраж по Haversine с коэффициентом 1.3 (туда и обратно): {total_distance:.2f} км")
                         st.write(f"Доплата: {total_distance:.2f} × 32 = {total_distance * 32:.2f} руб.")
-                    else:
-                        st.write("Доставка внутри Твери, доплата не начислена.")
             except ValueError as e:
                 st.error(f"Ошибка: {e}")
             except Exception as e:
