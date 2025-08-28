@@ -5,6 +5,7 @@ import os
 import asyncio
 import aiohttp
 import json
+import subprocess
 
 # Установка заголовка вкладки
 st.set_page_config(page_title="Флора калькулятор (розница)")
@@ -94,16 +95,36 @@ cargo_prices = {
 def load_cache():
     cache_file = 'cache.json'
     if os.path.exists(cache_file):
-        with open(cache_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            st.warning(f"Ошибка при загрузке кэша: {e}")
+            return {}
     return {}
 
 def save_cache(cache):
+    cache_file = 'cache.json'
     try:
-        with open('cache.json', 'w', encoding='utf-8') as f:
+        # Отладка: выводим содержимое кэша перед сохранением
+        st.session_state.cache_before_save = cache
+        with open(cache_file, 'w', encoding='utf-8') as f:
             json.dump(cache, f, ensure_ascii=False, indent=2)
+        # Проверяем, что файл записан
+        if os.path.exists(cache_file):
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                saved_cache = json.load(f)
+                st.session_state.cache_after_save = saved_cache
+        # Пытаемся синхронизировать с GitHub
+        try:
+            subprocess.run(['git', 'add', cache_file], check=True)
+            subprocess.run(['git', 'commit', '-m', 'Update cache.json'], check=True)
+            subprocess.run(['git', 'push'], check=True)
+            st.session_state.git_sync_status = "Кэш успешно синхронизирован с GitHub"
+        except subprocess.CalledProcessError as e:
+            st.session_state.git_sync_status = f"Ошибка синхронизации кэша с GitHub: {e}"
     except Exception as e:
-        st.warning(f"Ошибка при сохранении кэша: {e}")
+        st.session_state.save_cache_error = f"Ошибка при сохранении кэша: {e}"
 
 # Геокодирование адреса через Яндекс
 def geocode_address(address, api_key):
@@ -146,7 +167,7 @@ async def get_road_distance_ors(start_lon, start_lat, end_lon, end_lat, api_key)
     body = {
         "coordinates": [[start_lon, start_lat], [end_lon, end_lat]],
         "units": "km",
-        "radiuses": [1000, 1000]  # Увеличиваем радиус поиска до 1000 м
+        "radiuses": [1000, 1000]
     }
     try:
         async with aiohttp.ClientSession() as session:
@@ -159,7 +180,7 @@ async def get_road_distance_ors(start_lon, start_lat, end_lon, end_lat, api_key)
                     error_data = await response.json()
                     error_code = error_data.get("error", {}).get("code", 0)
                     error_msg = error_data.get("error", {}).get("message", "Неизвестная ошибка")
-                    if error_code == 2010:  # Ошибка "Could not find routable point"
+                    if error_code == 2010:
                         raise ValueError(f"ORS не нашёл маршрут для координат: {error_msg}. Используется Haversine.")
                     raise ValueError(f"Ошибка ORS API: HTTP {response.status}. Код: {error_code}. Сообщение: {error_msg}")
     except aiohttp.ClientError as e:
@@ -210,6 +231,8 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
     # Расчёт расстояния всегда
     nearest_exit, dist_to_exit = find_nearest_exit_point(dest_lat, dest_lon)
     locality = extract_locality(address)
+    # Отладка: сохраняем locality для вывода
+    st.session_state.locality = locality
     
     if locality and locality in distance_table:
         total_distance = distance_table[locality]['distance']
@@ -282,11 +305,21 @@ else:
         # Показываем версии библиотек
         st.write(f"Версия Streamlit: {st.__version__}")
         st.write(f"Версия aiohttp: {aiohttp.__version__}")
+        # Показываем отладочную информацию о кэше
+        cache = load_cache()
+        st.write(f"Текущий кэш: {cache}")
+        if 'cache_before_save' in st.session_state:
+            st.write(f"Кэш перед сохранением: {st.session_state.cache_before_save}")
+        if 'cache_after_save' in st.session_state:
+            st.write(f"Кэш после сохранения: {st.session_state.cache_after_save}")
+        if 'save_cache_error' in st.session_state:
+            st.write(f"Ошибка сохранения кэша: {st.session_state.save_cache_error}")
+        if 'git_sync_status' in st.session_state:
+            st.write(f"Статус синхронизации с GitHub: {st.session_state.git_sync_status}")
         if not routing_api_key:
             st.warning("ORS_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.3.")
         else:
             st.success("ORS_API_KEY настроен. Расстояние будет рассчитано по реальным дорогам.")
-        cache = load_cache()
         if cache:
             st.write("Кэш расстояний:")
             for locality, data in cache.items():
@@ -304,6 +337,7 @@ else:
                     st.write(f"Координаты адреса: lat={dest_lat}, lon={dest_lon}")
                     st.write(f"Ближайшая точка выхода: {nearest_exit}")
                     st.write(f"Расстояние до ближайшей точки выхода (по прямой): {dist_to_exit:.2f} км")
+                    st.write(f"Извлечённый населённый пункт: {locality}")
                     st.write(f"Источник расстояния: {source}")
                     if source == "таблица":
                         st.write(f"Населённый пункт из таблицы: {locality}")
