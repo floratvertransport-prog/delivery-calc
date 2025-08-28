@@ -6,7 +6,11 @@ import asyncio
 import aiohttp
 import json
 
-# Функция для расчёта расстояния по прямой (Haversine)
+st.set_page_config(page_title="Флора Тверь калькулятор")
+
+st.image("logo.png", width=200)
+
+# Функция для расчёта расстояния по прямой (Haversine, для определения направления)
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
     lat1_rad = math.radians(lat1)
@@ -23,7 +27,7 @@ def haversine(lat1, lon1, lat2, lon2):
     distance = R * c
     return distance
 
-# Точки выхода из Твери
+# Точки выхода из Твери (координаты административной границы)
 exit_points = [
     (36.055364, 56.795587),  # Направление: Клин, Редкино, Мокшино, Новозавидовский, Конаково
     (35.871802, 56.808677),  # Направление: Волоколамск, Лотошино, Руза, Шаховская
@@ -33,7 +37,7 @@ exit_points = [
     (35.932805, 56.902966)   # Направление: Сонково, Сандово, Лесное, Максатиха, Рамешки, Весьегонск, Калязин, Кесова Гора, Красный Холм, Бежецк, Кашин
 ]
 
-# Таблица расстояний (туда и обратно, км)
+# Таблица расстояний (туда и обратно, км) как запасной вариант
 distance_table = {
     'Клин': {'distance': 140, 'exit_point': (36.055364, 56.795587)},
     'Редкино': {'distance': 60, 'exit_point': (36.055364, 56.795587)},
@@ -101,7 +105,7 @@ def save_cache(cache):
 def geocode_address(address, api_key):
     url = f"https://geocode-maps.yandex.ru/1.x/?apikey={api_key}&geocode={address}&format=json"
     response = requests.get(url)
-    if response.status_code == 200:
+    if response.status == 200:
         data = response.json()
         try:
             pos = data['response']['GeoObjectCollection']['featureMember'][0]['GeoObject']['Point']['pos']
@@ -197,9 +201,9 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
     
     base_cost = cargo_prices[cargo_size]
     
-    # Проверяем таблицу расстояний
-    locality = extract_locality(address)
+    # Расчёт расстояния всегда
     nearest_exit, dist_to_exit = find_nearest_exit_point(dest_lat, dest_lon)
+    locality = extract_locality(address)
     
     if locality and locality in distance_table:
         total_distance = distance_table[locality]['distance']
@@ -208,16 +212,14 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
         rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
         return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "table"
     
-    # Проверяем кэш
     cache = load_cache()
     if locality and locality in cache:
         total_distance = cache[locality]['distance']
         extra_cost = total_distance * rate_per_km
         total_cost = base_cost + extra_cost
         rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
-        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "cache"
+        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "кэш"
     
-    # Используем OpenRouteService для дорожного расстояния
     if routing_api_key and locality:
         try:
             road_distance = await get_road_distance_ors(nearest_exit[0], nearest_exit[1], dest_lon, dest_lat, routing_api_key)
@@ -225,13 +227,11 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
             extra_cost = total_distance * rate_per_km
             total_cost = base_cost + extra_cost
             rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
-            # Сохраняем в кэш
             cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
             save_cache(cache)
             return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "ors"
         except ValueError as e:
             st.warning(f"Ошибка ORS API: {e}. Используется Haversine с коэффициентом 1.3.")
-            # Падение на Haversine с коэффициентом 1.3
             road_distance = dist_to_exit * 1.3
             total_distance = road_distance * 2
             extra_cost = total_distance * rate_per_km
@@ -254,7 +254,7 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
     return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "haversine"
 
 # Streamlit UI
-st.title("Калькулятор стоимости доставки по Твери")
+st.title("Калькулятор стоимости доставки по Твери и области для розничных клиентов")
 st.write("Введите адрес доставки и выберите размер груза.")
 
 api_key = os.environ.get("API_KEY")
