@@ -289,4 +289,127 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
         extra_cost = total_distance * rate_per_km
         total_cost = base_cost + extra_cost
         rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
-        return rounded_cost, distFinger1: System: Простите, но я не могу ответить на этот вопрос, так как он требует больше информации, чем у меня есть. Могу ли я помочь вам с чем-то ещё?
+        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "таблица"
+    cache = load_cache()
+    if locality and locality in cache:
+        total_distance = cache[locality]['distance']
+        extra_cost = total_distance * rate_per_km
+        total_cost = base_cost + extra_cost
+        rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
+        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "кэш"
+    if routing_api_key and locality:
+        try:
+            road_distance = await get_road_distance_ors(nearest_exit[0], nearest_exit[1], dest_lon, dest_lat, routing_api_key)
+            total_distance = road_distance * 2
+            extra_cost = total_distance * rate_per_km
+            total_cost = base_cost + extra_cost
+            rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
+            cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
+            save_cache(cache)
+            return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "ors"
+        except ValueError as e:
+            st.warning(f"Ошибка ORS API: {e}. Используется Haversine с коэффициентом 1.3.")
+            road_distance = dist_to_exit * 1.3
+            total_distance = road_distance * 2
+            extra_cost = total_distance * rate_per_km
+            total_cost = base_cost + extra_cost
+            rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
+            if locality:
+                cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
+                save_cache(cache)
+            return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "haversine"
+    road_distance = dist_to_exit * 1.3
+    total_distance = road_distance * 2
+    extra_cost = total_distance * rate_per_km
+    total_cost = base_cost + extra_cost
+    rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
+    if locality:
+        cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
+        save_cache(cache)
+    return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "haversine"
+
+# Streamlit UI
+st.title("Калькулятор стоимости доставки по Твери и области для розничных клиентов")
+st.write("Введите адрес доставки и выберите размер груза.")
+api_key = os.environ.get("API_KEY")
+routing_api_key = os.environ.get("ORS_API_KEY")
+if not api_key:
+    st.error("Ошибка: API-ключ для геокодирования не настроен. Обратитесь к администратору.")
+else:
+    cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
+    address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
+    admin_password = st.text_input("Админ пароль для отладки (оставьте пустым для обычного режима)", type="password")
+    if admin_password == "admin123":
+        st.write("Точки выхода из Твери:")
+        for i, point in enumerate(exit_points, 1):
+            st.write(f"Точка {i}: {point}")
+        server_ip = asyncio.run(get_server_ip())
+        st.write(f"IP сервера Render: {server_ip}")
+        st.write(f"Версия Streamlit: {st.__version__}")
+        st.write(f"Версия aiohttp: {aiohttp.__version__}")
+        st.write(f"Проверка GIT_TOKEN: {check_git_token()}")
+        cache = load_cache()
+        st.write(f"Текущий кэш: {cache}")
+        if 'cache_before_save' in st.session_state:
+            st.write(f"Кэш перед сохранением: {st.session_state.cache_before_save}")
+        if 'cache_after_save' in st.session_state:
+            st.write(f"Кэш после сохранения: {st.session_state.cache_after_save}")
+        if 'save_cache_error' in st.session_state:
+            st.write(f"Ошибка сохранения кэша: {st.session_state.save_cache_error}")
+        if 'git_sync_status' in st.session_state:
+            st.write(f"Статус синхронизации с GitHub: {st.session_state.git_sync_status}")
+        if 'git_fetch_status' in st.session_state:
+            st.write(f"Статус git fetch: {st.session_state.git_fetch_status}")
+        if 'git_pull_status' in st.session_state:
+            st.write(f"Статус git pull: {st.session_state.git_pull_status}")
+        if 'git_remote_status' in st.session_state:
+            st.write(st.session_state.git_remote_status)
+        if 'git_branch_status' in st.session_state:
+            st.write(st.session_state.git_branch_status)
+        if 'git_status' in st.session_state:
+            st.write(st.session_state.git_status)
+        if not routing_api_key:
+            st.warning("ORS_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.3.")
+        else:
+            st.success("ORS_API_KEY настроен. Расстояние будет рассчитано по реальным дорогам.")
+        if cache:
+            st.write("Кэш расстояний:")
+            for locality, data in cache.items():
+                st.write(f"{locality}: {data['distance']} км (точка выхода: {data['exit_point']})")
+    if st.button("Рассчитать"):
+        if address:
+            try:
+                dest_lat, dest_lon = geocode_address(address, api_key)
+                result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key))
+                cost, dist_to_exit, nearest_exit, locality, total_distance, source = result
+                st.success(f"Стоимость доставки: {cost} руб.")
+                if admin_password == "admin123":
+                    st.write(f"Координаты адреса: lat={dest_lat}, lon={dest_lon}")
+                    st.write(f"Ближайшая точка выхода: {nearest_exit}")
+                    st.write(f"Расстояние до ближайшей точки выхода (по прямой): {dist_to_exit:.2f} км")
+                    st.write(f"Извлечённый населённый пункт: {locality}")
+                    st.write(f"Источник расстояния: {source}")
+                    if source == "город":
+                        st.write(f"Населённый пункт: {locality} (доставка в пределах Твери)")
+                        st.write(f"Километраж: {total_distance} км (без доплаты)")
+                        st.write(f"Базовая стоимость: {cost} руб. (без округления)")
+                    elif source == "таблица":
+                        st.write(f"Населённый пункт из таблицы: {locality}")
+                        st.write(f"Километраж из таблицы (туда и обратно): {total_distance} км")
+                        st.write(f"Доплата: {total_distance} × 32 = {total_distance * 32} руб.")
+                    elif source == "кэш":
+                        st.write(f"Населённый пункт из кэша: {locality}")
+                        st.write(f"Километраж из кэша (туда и обратно): {total_distance} км")
+                        st.write(f"Доплата: {total_distance} × 32 = {total_distance * 32} руб.")
+                    elif source == "ors":
+                        st.write(f"Населённый пункт: {locality}")
+                        st.write(f"Километраж по реальным дорогам (туда и обратно): {total_distance:.2f} км")
+                        st.write(f"Доплата: {total_distance:.2f} × 32 = {total_distance * 32:.2f} руб.")
+                    elif source == "haversine":
+                        st.write(f"Населённый пункт: {locality}")
+                        st.write(f"Километраж по Haversine с коэффициентом 1.3 (туда и обратно): {total_distance:.2f} км")
+                        st.write(f"Доплата: {total_distance:.2f} × 32 = {total_distance * 32:.2f} руб.")
+            except ValueError as e:
+                st.error(f"Ошибка: {e}")
+            except Exception as e:
+                st.error(f"Ошибка при расчёте: {e}")
