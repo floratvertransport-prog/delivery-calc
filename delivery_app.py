@@ -351,7 +351,7 @@ else:
         if 'cache_before_save' in st.session_state:
             st.write(f"Кэш перед сохранением: {st.session_state.cache_before_save}")
         if 'cache_after_save' in st.session_state:
-            st.write(f"Кэш после сохранения: {st.session_state.cache_after_save}")
+            st.write(f"Кэш после сохранением: {st.session_state.cache_after_save}")
         if 'save_cache_error' in st.session_state:
             st.write(f"Ошибка сохранения кэша: {st.session_state.save_cache_error}")
         if 'git_sync_status' in st.session_state:
@@ -369,7 +369,7 @@ else:
         if not routing_api_key:
             st.warning("ORS_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.3.")
         else:
-            st.success("ORS_API_KEY настроен. Расстояние будет рассчитано Conferences and Workshops.")
+            st.success("ORS_API_KEY настроен. Расстояние будет рассчитано по реальным дорогам.")
         if cache:
             st.write("Кэш расстояний:")
             for locality, data in cache.items():
