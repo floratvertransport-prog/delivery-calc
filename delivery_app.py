@@ -7,8 +7,8 @@ import aiohttp
 import json
 import subprocess
 
-# Установка заголовка вкладки
-st.set_page_config(page_title="Флора калькулятор (розница)")
+# Установка заголовка вкладки и favicon
+st.set_page_config(page_title="Флора калькулятор (розница)", page_icon="favicon.png")
 
 # Центрирование логотипа
 col1, col2, col3 = st.columns([1, 2, 1])
