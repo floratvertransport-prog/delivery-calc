@@ -120,18 +120,20 @@ def save_cache(cache):
                 git_repo = git_repo.replace('https://', f'https://{git_token}@')
             # Проверяем и добавляем origin
             remote_output = subprocess.run(['git', 'remote', '-v'], capture_output=True, text=True)
-            st.session_state.git_remote_status = f"Git remote: {remote_output.stdout}"
+            st.session_state.git_remote_status = f"Git remote: {remote_output.stdout or 'No remotes set'}"
             if 'origin' not in remote_output.stdout:
                 subprocess.run(['git', 'remote', 'add', 'origin', git_repo], check=True, capture_output=True, text=True)
+                st.session_state.git_remote_status = f"Git remote: added origin {git_repo}"
             # Настраиваем Git
             subprocess.run(['git', 'config', '--global', 'user.name', os.environ.get('GIT_USER', 'floratvertransport-prog')], check=True, capture_output=True, text=True)
             subprocess.run(['git', 'config', '--global', 'user.email', 'floratvertransport-prog@example.com'], check=True, capture_output=True, text=True)
-            # Исправляем detached HEAD
+            # Проверяем текущую ветку и исправляем detached HEAD
             branch_output = subprocess.run(['git', 'branch'], capture_output=True, text=True)
             st.session_state.git_branch_status = f"Git branch: {branch_output.stdout}"
             if 'detached' in branch_output.stdout:
-                subprocess.run(['git', 'checkout', '-B', 'main'], check=True, capture_output=True, text=True)
-                subprocess.run(['git', 'branch', '--set-upstream-to=origin/main', 'main'], check=True, capture_output=True, text=True)
+                subprocess.run(['git', 'fetch', 'origin'], check=True, capture_output=True, text=True)
+                subprocess.run(['git', 'checkout', '-B', 'main', 'origin/main'], check=True, capture_output=True, text=True)
+                st.session_state.git_branch_status = f"Git branch: switched to main"
             # Синхронизируем ветку
             try:
                 fetch_result = subprocess.run(['git', 'fetch', 'origin'], check=True, capture_output=True, text=True)
@@ -351,7 +353,7 @@ else:
         if 'cache_before_save' in st.session_state:
             st.write(f"Кэш перед сохранением: {st.session_state.cache_before_save}")
         if 'cache_after_save' in st.session_state:
-            st.write(f"Кэш после сохранением: {st.session_state.cache_after_save}")
+            st.write(f"Кэш после сохранения: {st.session_state.cache_after_save}")
         if 'save_cache_error' in st.session_state:
             st.write(f"Ошибка сохранения кэша: {st.session_state.save_cache_error}")
         if 'git_sync_status' in st.session_state:
