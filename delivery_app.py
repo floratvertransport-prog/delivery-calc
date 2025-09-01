@@ -6,8 +6,9 @@ import asyncio
 import aiohttp
 import json
 import subprocess
+from datetime import date, datetime
 
-# Установка заголовка вкладки и favicon
+# Установка заголовка вкладки
 st.set_page_config(page_title="Флора калькулятор (розница)", page_icon="favicon.png")
 
 # Центрирование логотипа
@@ -39,53 +40,75 @@ exit_points = [
     (35.932805, 56.902966)
 ]
 
-# Таблица расстояний
+# Таблица расстояний с координатами
 distance_table = {
-    'Клин': {'distance': 140, 'exit_point': (36.055364, 56.795587)},
-    'Редкино': {'distance': 60, 'exit_point': (36.055364, 56.795587)},
-    'Мокшино': {'distance': 76, 'exit_point': (36.055364, 56.795587)},
-    'Новозавидовский': {'distance': 88, 'exit_point': (36.055364, 56.795587)},
-    'Конаково': {'distance': 134, 'exit_point': (36.055364, 56.795587)},
-    'Волоколамск': {'distance': 218, 'exit_point': (35.871802, 56.808677)},
-    'Лотошино': {'distance': 148, 'exit_point': (35.871802, 56.808677)},
-    'Руза': {'distance': 320, 'exit_point': (35.871802, 56.808677)},
-    'Шаховская': {'distance': 204, 'exit_point': (35.871802, 56.808677)},
-    'Великие Луки': {'distance': 740, 'exit_point': (35.804913, 56.831684)},
-    'Жарковский': {'distance': 640, 'exit_point': (35.804913, 56.831684)},
-    'Западная Двина': {'distance': 530, 'exit_point': (35.804913, 56.831684)},
-    'Зубцов': {'distance': 238, 'exit_point': (35.804913, 56.831684)},
-    'Нелидово': {'distance': 444, 'exit_point': (35.804913, 56.831684)},
-    'Оленино': {'distance': 350, 'exit_point': (35.804913, 56.831684)},
-    'Ржев': {'distance': 230, 'exit_point': (35.804913, 56.831684)},
-    'Старица': {'distance': 132, 'exit_point': (35.804913, 56.831684)},
-    'Торопец': {'distance': 620, 'exit_point': (35.804913, 56.831684)},
-    'Дубна': {'distance': 230, 'exit_point': (36.020937, 56.850973)},
-    'Кимры': {'distance': 186, 'exit_point': (36.020937, 56.850973)},
-    'Бологое': {'distance': 356, 'exit_point': (35.797443, 56.882207)},
-    'Вышний Волочек': {'distance': 242, 'exit_point': (35.797443, 56.882207)},
-    'Лихославль': {'distance': 88, 'exit_point': (35.797443, 56.882207)},
-    'Спирово': {'distance': 206, 'exit_point': (35.797443, 56.882207)},
-    'Торжок': {'distance': 122, 'exit_point': (35.797443, 56.882207)},
-    'Удомля': {'distance': 346, 'exit_point': (35.797443, 56.882207)},
-    'Сонково': {'distance': 306, 'exit_point': (35.932805, 56.902966)},
-    'Сандово': {'distance': 474, 'exit_point': (35.932805, 56.902966)},
-    'Лесное': {'distance': 382, 'exit_point': (35.932805, 56.902966)},
-    'Максатиха': {'distance': 232, 'exit_point': (35.932805, 56.902966)},
-    'Рамешки': {'distance': 118, 'exit_point': (35.932805, 56.902966)},
-    'Весьегонск': {'distance': 486, 'exit_point': (35.932805, 56.902966)},
-    'Калязин': {'distance': 386, 'exit_point': (35.932805, 56.902966)},
-    'Кесова Гора': {'distance': 414, 'exit_point': (35.932805, 56.902966)},
-    'Красный Холм': {'distance': 330, 'exit_point': (35.932805, 56.902966)},
-    'Бежецк': {'distance': 244, 'exit_point': (35.932805, 56.902966)},
-    'Кашин': {'distance': 286, 'exit_point': (35.932805, 56.902966)}
+    'Клин': {'distance': 140, 'exit_point': (36.055364, 56.795587), 'coords': (36.728611, 56.339167)},
+    'Редкино': {'distance': 60, 'exit_point': (36.055364, 56.795587), 'coords': (36.013333, 56.723333)},
+    'Мокшино': {'distance': 76, 'exit_point': (36.055364, 56.795587), 'coords': (36.106667, 56.616667)},
+    'Новозавидовский': {'distance': 88, 'exit_point': (36.055364, 56.795587), 'coords': (36.050000, 56.533333)},
+    'Конаково': {'distance': 134, 'exit_point': (36.055364, 56.795587), 'coords': (36.775000, 56.708333)},
+    'Волоколамск': {'distance': 218, 'exit_point': (35.871802, 56.808677), 'coords': (35.957222, 56.035278)},
+    'Лотошино': {'distance': 148, 'exit_point': (35.871802, 56.808677), 'coords': (35.506111, 56.047222)},
+    'Руза': {'distance': 320, 'exit_point': (35.871802, 56.808677), 'coords': (36.227778, 55.702778)},
+    'Шаховская': {'distance': 204, 'exit_point': (35.871802, 56.808677), 'coords': (35.879722, 56.043611)},
+    'Великие Луки': {'distance': 740, 'exit_point': (35.804913, 56.831684), 'coords': (30.609167, 56.340278)},
+    'Жарковский': {'distance': 640, 'exit_point': (35.804913, 56.831684), 'coords': (32.950833, 55.816667)},
+    'Западная Двина': {'distance': 530, 'exit_point': (35.804913, 56.831684), 'coords': (32.055000, 56.250278)},
+    'Зубцов': {'distance': 238, 'exit_point': (35.804913, 56.831684), 'coords': (34.583333, 56.183333)},
+    'Нелидово': {'distance': 444, 'exit_point': (35.804913, 56.831684), 'coords': (32.775278, 56.225278)},
+    'Оленино': {'distance': 350, 'exit_point': (35.804913, 56.831684), 'coords': (33.483333, 56.183333)},
+    'Ржев': {'distance': 230, 'exit_point': (35.804913, 56.831684), 'coords': (34.327778, 56.261111)},
+    'Старица': {'distance': 132, 'exit_point': (35.804913, 56.831684), 'coords': (34.935000, 56.505278)},
+    'Торопец': {'distance': 620, 'exit_point': (35.804913, 56.831684), 'coords': (31.633333, 56.500000)},
+    'Дубна': {'distance': 230, 'exit_point': (36.020937, 56.850973), 'coords': (37.166667, 56.733333)},
+    'Кимры': {'distance': 186, 'exit_point': (36.020937, 56.850973), 'coords': (37.358333, 56.866667)},
+    'Бологое': {'distance': 356, 'exit_point': (35.797443, 56.882207), 'coords': (34.083333, 57.883333)},
+    'Вышний Волочек': {'distance': 242, 'exit_point': (35.797443, 56.882207), 'coords': (34.566667, 57.583333)},
+    'Лихославль': {'distance': 88, 'exit_point': (35.797443, 56.882207), 'coords': (36.083333, 57.116667)},
+    'Спирово': {'distance': 206, 'exit_point': (35.797443, 56.882207), 'coords': (36.416667, 57.416667)},
+    'Торжок': {'distance': 122, 'exit_point': (35.797443, 56.882207), 'coords': (34.966667, 57.033333)},
+    'Удомля': {'distance': 346, 'exit_point': (35.797443, 56.882207), 'coords': (35.016667, 57.866667)},
+    'Сонково': {'distance': 306, 'exit_point': (35.932805, 56.902966), 'coords': (37.150000, 57.783333)},
+    'Сандово': {'distance': 474, 'exit_point': (35.932805, 56.902966), 'coords': (36.983333, 58.450000)},
+    'Лесное': {'distance': 382, 'exit_point': (35.932805, 56.902966), 'coords': (37.150000, 58.166667)},
+    'Максатиха': {'distance': 232, 'exit_point': (35.932805, 56.902966), 'coords': (36.566667, 57.916667)},
+    'Рамешки': {'distance': 118, 'exit_point': (35.932805, 56.902966), 'coords': (36.916667, 57.350000)},
+    'Весьегонск': {'distance': 486, 'exit_point': (35.932805, 56.902966), 'coords': (37.266667, 58.733333)},
+    'Калязин': {'distance': 386, 'exit_point': (35.932805, 56.902966), 'coords': (38.150000, 57.233333)},
+    'Кесова Гора': {'distance': 414, 'exit_point': (35.932805, 56.902966), 'coords': (37.616667, 57.883333)},
+    'Красный Холм': {'distance': 330, 'exit_point': (35.932805, 56.902966), 'coords': (37.116667, 58.066667)},
+    'Бежецк': {'distance': 244, 'exit_point': (35.932805, 56.902966), 'coords': (36.683333, 57.783333)},
+    'Кашин': {'distance': 286, 'exit_point': (35.932805, 56.902966), 'coords': (37.616667, 57.300000)},
+    'Кувшиново': {'distance': 216, 'exit_point': (35.797443, 56.882207), 'coords': (34.750000, 57.366667)},
+    'Осташков': {'distance': 370, 'exit_point': (35.797443, 56.882207), 'coords': (33.116667, 57.150000)},
+    'Селижарово': {'distance': 430, 'exit_point': (35.797443, 56.882207), 'coords': (33.466667, 56.850000)},
+    'Пено': {'distance': 400, 'exit_point': (35.797443, 56.882207), 'coords': (32.716667, 56.916667)}
 }
 
-# Тарифы
-rate_per_km = 32
-cargo_prices = {
-    'маленький': 350,
-    'средний': 500,
-    'большой': 800
+# Словарь рейсов по дням недели (0 = понедельник, 1 = вторник, и т.д.)
+reysy = {
+    0: [
+        ["Великие Луки", "Жарковский", "Торопец", "Западная Двина", "Нелидово", "Оленино", "Зубцов", "Ржев", "Старица"],
+        ["Кашин", "Калязин", "Кесова Гора"]
+    ],
+    1: [
+        ["Конаково", "Редкино", "Мокшино", "Новозавидовский", "Клин"],
+        ["Руза", "Волоколамск", "Шаховская", "Лотошино"]
+    ],
+    2: [
+        ["Дубна", "Кимры"],
+        ["Старица", "Ржев", "Зубцов"],
+        ["Кувшиново", "Осташков", "Селижарово", "Пено"]
+    ],
+    3: [
+        ["Великие Луки", "Жарковский", "Торопец", "Западная Двина", "Нелидово", "Оленино"],
+        ["Бологое"]
+    ],
+    4: [
+        ["Удомля", "Вышний Волочек", "Спирово", "Торжок", "Лихославль"],
+        ["Лесное", "Максатиха", "Рамешки"],
+        ["Сандово", "Весьегонск", "Красный Холм", "Сонково", "Бежецк"]
+    ]
 }
 
 # Функции для кэша
@@ -246,7 +269,7 @@ def find_nearest_exit_point(dest_lat, dest_lon):
             nearest_exit = exit_point
     return nearest_exit, min_dist
 
-# Извлечение населённого пункта
+# Извлечение населённого пункта и проверка на соответствие рейсу
 def extract_locality(address):
     if 'тверь' in address.lower():
         return 'Тверь'
@@ -264,6 +287,17 @@ def extract_locality(address):
             return part
     return None
 
+def check_route_match(locality, delivery_date):
+    if not locality or not delivery_date:
+        return None
+    day_of_week = delivery_date.weekday()
+    if day_of_week not in reysy:
+        return None
+    for route in reysy[day_of_week]:
+        if locality in route:
+            return True
+    return False
+
 # Округление стоимости
 def round_cost(cost):
     remainder = cost % 100
@@ -272,31 +306,32 @@ def round_cost(cost):
     else:
         return ((cost // 100) + 1) * 100
 
-# Расчёт стоимости
-async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key):
+# Расчёт стоимости с учетом рейса
+async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key, delivery_date=None, use_route_rate=False):
     if cargo_size not in cargo_prices:
         raise ValueError("Неверный размер груза. Доступны: маленький, средний, большой")
     base_cost = cargo_prices[cargo_size]
     nearest_exit, dist_to_exit = find_nearest_exit_point(dest_lat, dest_lon)
     locality = extract_locality(address)
     st.session_state.locality = locality
+    rate_per_km = 15 if use_route_rate else 32
     if locality and locality.lower() == 'тверь':
         total_distance = 0
         total_cost = base_cost
-        return total_cost, dist_to_exit, nearest_exit, locality, total_distance, "город"
+        return total_cost, dist_to_exit, nearest_exit, locality, total_distance, "город", rate_per_km
     if locality and locality in distance_table:
         total_distance = distance_table[locality]['distance']
         extra_cost = total_distance * rate_per_km
         total_cost = base_cost + extra_cost
         rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
-        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "таблица"
+        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "таблица", rate_per_km
     cache = load_cache()
     if locality and locality in cache:
         total_distance = cache[locality]['distance']
         extra_cost = total_distance * rate_per_km
         total_cost = base_cost + extra_cost
         rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
-        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "кэш"
+        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "кэш", rate_per_km
     if routing_api_key and locality:
         try:
             road_distance = await get_road_distance_ors(nearest_exit[0], nearest_exit[1], dest_lon, dest_lat, routing_api_key)
@@ -306,7 +341,7 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
             rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
             cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
             save_cache(cache)
-            return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "ors"
+            return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "ors", rate_per_km
         except ValueError as e:
             st.warning(f"Ошибка ORS API: {e}. Используется Haversine с коэффициентом 1.3.")
             road_distance = dist_to_exit * 1.3
@@ -317,7 +352,7 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
             if locality:
                 cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
                 save_cache(cache)
-            return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "haversine"
+            return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "haversine", rate_per_km
     road_distance = dist_to_exit * 1.3
     total_distance = road_distance * 2
     extra_cost = total_distance * rate_per_km
@@ -326,11 +361,11 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
     if locality:
         cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
         save_cache(cache)
-    return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "haversine"
+    return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "haversine", rate_per_km
 
 # Streamlit UI
 st.title("Калькулятор стоимости доставки по Твери и области для розничных клиентов")
-st.write("Введите адрес доставки и выберите размер груза.")
+st.write("Введите адрес доставки, выберите размер груза и дату доставки.")
 api_key = os.environ.get("API_KEY")
 routing_api_key = os.environ.get("ORS_API_KEY")
 if not api_key:
@@ -338,6 +373,7 @@ if not api_key:
 else:
     cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
     address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
+    delivery_date = st.date_input("Дата доставки", value=date(2025, 9, 1), format="DD.MM.YYYY", language="ru", first_day=0)
     admin_password = st.text_input("Админ пароль для отладки (оставьте пустым для обычного режима)", type="password")
     if admin_password == "admin123":
         st.write("Точки выхода из Твери:")
@@ -380,8 +416,26 @@ else:
         if address:
             try:
                 dest_lat, dest_lon = geocode_address(address, api_key)
-                result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key))
-                cost, dist_to_exit, nearest_exit, locality, total_distance, source = result
+                locality = extract_locality(address)
+                use_route_rate = False
+                if check_route_match(locality, delivery_date):
+                    if 'use_route' not in st.session_state:
+                        st.session_state.use_route = False
+                    st.write("Доставка по рейсу вместе с оптовыми заказами")
+                    if st.checkbox("Использовать доставку по рейсу", value=st.session_state.use_route):
+                        if not st.session_state.get('route_confirmed', False):
+                            if st.button("Подтвердить использование рейса"):
+                                confirm = st.radio("Вы уверены, что данный заказ можно доставить по рейсу вместе с оптовыми заказами?", ("Нет", "Да"))
+                                if confirm == "Да":
+                                    st.session_state.use_route = True
+                                    st.session_state.route_confirmed = True
+                                    st.experimental_rerun()
+                        else:
+                            use_route_rate = True
+                    else:
+                        st.session_state.route_confirmed = False
+                result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key, delivery_date, use_route_rate))
+                cost, dist_to_exit, nearest_exit, locality, total_distance, source, rate_per_km = result
                 st.success(f"Стоимость доставки: {cost} руб.")
                 if admin_password == "admin123":
                     st.write(f"Координаты адреса: lat={dest_lat}, lon={dest_lon}")
@@ -393,22 +447,11 @@ else:
                         st.write(f"Населённый пункт: {locality} (доставка в пределах Твери)")
                         st.write(f"Километраж: {total_distance} км (без доплаты)")
                         st.write(f"Базовая стоимость: {cost} руб. (без округления)")
-                    elif source == "таблица":
-                        st.write(f"Населённый пункт из таблицы: {locality}")
-                        st.write(f"Километраж из таблицы (туда и обратно): {total_distance} км")
-                        st.write(f"Доплата: {total_distance} × 32 = {total_distance * 32} руб.")
-                    elif source == "кэш":
-                        st.write(f"Населённый пункт из кэша: {locality}")
-                        st.write(f"Километраж из кэша (туда и обратно): {total_distance} км")
-                        st.write(f"Доплата: {total_distance} × 32 = {total_distance * 32} руб.")
-                    elif source == "ors":
+                    elif source in ["таблица", "кэш", "ors", "haversine"]:
                         st.write(f"Населённый пункт: {locality}")
-                        st.write(f"Километраж по реальным дорогам (туда и обратно): {total_distance:.2f} км")
-                        st.write(f"Доплата: {total_distance:.2f} × 32 = {total_distance * 32:.2f} руб.")
-                    elif source == "haversine":
-                        st.write(f"Населённый пункт: {locality}")
-                        st.write(f"Километраж по Haversine с коэффициентом 1.3 (туда и обратно): {total_distance:.2f} км")
-                        st.write(f"Доплата: {total_distance:.2f} × 32 = {total_distance * 32:.2f} руб.")
+                        st.write(f"Километраж (туда и обратно): {total_distance:.2f} км")
+                        st.write(f"Доплата: {total_distance:.2f} × {rate_per_km} = {total_distance * rate_per_km:.2f} руб.")
+                    st.write(f"Дата доставки: {delivery_date.strftime('%d.%m.%Y')} ({delivery_date.strftime('%A')})")
             except ValueError as e:
                 st.error(f"Ошибка: {e}")
             except Exception as e:
