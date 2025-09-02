@@ -386,69 +386,65 @@ routing_api_key = os.environ.get("ORS_API_KEY")
 if not api_key:
     st.error("Ошибка: API-ключ для геокодирования не настроен. Обратитесь к администратору.")
 else:
-    cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
-    address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
-    delivery_date = st.date_input("Дата доставки", value=date(2025, 9, 1), format="DD.MM.YYYY")
-    admin_password = st.text_input("Админ пароль для отладки (оставьте пустым для обычного режима)", type="password")
-    if admin_password == "admin123":
-        st.write("Точки выхода из Твери:")
-        for i, point in enumerate(exit_points, 1):
-            st.write(f"Точка {i}: {point}")
-        server_ip = asyncio.run(get_server_ip())
-        st.write(f"IP сервера Render: {server_ip}")
-        st.write(f"Версия Streamlit: {st.__version__}")
-        st.write(f"Версия aiohttp: {aiohttp.__version__}")
-        st.write(f"Проверка GIT_TOKEN: {check_git_token()}")
-        cache = load_cache()
-        st.write(f"Текущий кэш: {cache}")
-        if 'cache_before_save' in st.session_state:
-            st.write(f"Кэш перед сохранением: {st.session_state.cache_before_save}")
-        if 'cache_after_save' in st.session_state:
-            st.write(f"Кэш после сохранения: {st.session_state.cache_after_save}")
-        if 'save_cache_error' in st.session_state:
-            st.write(f"Ошибка сохранения кэша: {st.session_state.save_cache_error}")
-        if 'git_sync_status' in st.session_state:
-            st.write(f"Статус синхронизации с GitHub: {st.session_state.git_sync_status}")
-        if 'git_fetch_status' in st.session_state:
-            st.write(f"Статус git fetch: {st.session_state.git_fetch_status}")
-        if 'git_pull_status' in st.session_state:
-            st.write(f"Статус git pull: {st.session_state.git_pull_status}")
-        if 'git_remote_status' in st.session_state:
-            st.write(st.session_state.git_remote_status)
-        if 'git_branch_status' in st.session_state:
-            st.write(st.session_state.git_branch_status)
-        if 'git_status' in st.session_state:
-            st.write(st.session_state.git_status)
-        if not routing_api_key:
-            st.warning("ORS_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.3.")
-        else:
-            st.success("ORS_API_KEY настроен. Расстояние будет рассчитано по реальным дорогам.")
-        if cache:
-            st.write("Кэш расстояний:")
-            for locality, data in cache.items():
-                st.write(f"{locality}: {data['distance']} км (точка выхода: {data['exit_point']})")
-    if st.button("Рассчитать"):
-        if address:
+    with st.form(key="delivery_form"):
+        cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
+        address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
+        delivery_date = st.date_input("Дата доставки", value=date(2025, 9, 2), format="DD.MM.YYYY")
+        admin_password = st.text_input("Админ пароль для отладки (оставьте пустым для обычного режима)", type="password")
+        if admin_password == "admin123":
+            st.write("Точки выхода из Твери:")
+            for i, point in enumerate(exit_points, 1):
+                st.write(f"Точка {i}: {point}")
+            server_ip = asyncio.run(get_server_ip())
+            st.write(f"IP сервера Render: {server_ip}")
+            st.write(f"Версия Streamlit: {st.__version__}")
+            st.write(f"Версия aiohttp: {aiohttp.__version__}")
+            st.write(f"Проверка GIT_TOKEN: {check_git_token()}")
+            cache = load_cache()
+            st.write(f"Текущий кэш: {cache}")
+            if 'cache_before_save' in st.session_state:
+                st.write(f"Кэш перед сохранением: {st.session_state.cache_before_save}")
+            if 'cache_after_save' in st.session_state:
+                st.write(f"Кэш после сохранения: {st.session_state.cache_after_save}")
+            if 'save_cache_error' in st.session_state:
+                st.write(f"Ошибка сохранения кэша: {st.session_state.save_cache_error}")
+            if 'git_sync_status' in st.session_state:
+                st.write(f"Статус синхронизации с GitHub: {st.session_state.git_sync_status}")
+            if 'git_fetch_status' in st.session_state:
+                st.write(f"Статус git fetch: {st.session_state.git_fetch_status}")
+            if 'git_pull_status' in st.session_state:
+                st.write(f"Статус git pull: {st.session_state.git_pull_status}")
+            if 'git_remote_status' in st.session_state:
+                st.write(st.session_state.git_remote_status)
+            if 'git_branch_status' in st.session_state:
+                st.write(st.session_state.git_branch_status)
+            if 'git_status' in st.session_state:
+                st.write(st.session_state.git_status)
+            if not routing_api_key:
+                st.warning("ORS_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.3.")
+            else:
+                st.success("ORS_API_KEY настроен. Расстояние будет рассчитано по реальным дорогам.")
+            if cache:
+                st.write("Кэш расстояний:")
+                for locality, data in cache.items():
+                    st.write(f"{locality}: {data['distance']} км (точка выхода: {data['exit_point']})")
+        # Логика выбора рейса
+        locality = extract_locality(address)
+        if check_route_match(locality, delivery_date):
+            if 'use_route' not in st.session_state:
+                st.session_state.use_route = False
+            st.session_state.use_route = st.checkbox("Использовать доставку по рейсу", value=st.session_state.use_route)
+            if st.session_state.use_route and not st.session_state.get('route_confirmed', False):
+                confirm = st.radio("Вы уверены, что данный заказ можно доставить по рейсу вместе с оптовыми заказами?", ("Нет", "Да"))
+                if confirm == "Да":
+                    st.session_state.route_confirmed = True
+                elif confirm == "Нет":
+                    st.session_state.use_route = False
+        submit_button = st.form_submit_button("Рассчитать")
+        if submit_button and address:
             try:
                 dest_lat, dest_lon = geocode_address(address, api_key)
-                locality = extract_locality(address)
-                use_route_rate = False
-                if check_route_match(locality, delivery_date):
-                    if 'use_route' not in st.session_state:
-                        st.session_state.use_route = False
-                    st.write("Доставка по рейсу вместе с оптовыми заказами")
-                    if st.checkbox("Использовать доставку по рейсу", value=st.session_state.use_route):
-                        if not st.session_state.get('route_confirmed', False):
-                            if st.button("Подтвердить использование рейса"):
-                                confirm = st.radio("Вы уверены, что данный заказ можно доставить по рейсу вместе с оптовыми заказами?", ("Нет", "Да"))
-                                if confirm == "Да":
-                                    st.session_state.use_route = True
-                                    st.session_state.route_confirmed = True
-                                    st.experimental_rerun()
-                        else:
-                            use_route_rate = True
-                    else:
-                        st.session_state.route_confirmed = False
+                use_route_rate = st.session_state.get('use_route', False) and st.session_state.get('route_confirmed', False)
                 result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key, delivery_date, use_route_rate))
                 cost, dist_to_exit, nearest_exit, locality, total_distance, source, rate_per_km = result
                 st.success(f"Стоимость доставки: {cost} руб.")
@@ -467,6 +463,7 @@ else:
                         st.write(f"Километраж (туда и обратно): {total_distance:.2f} км")
                         st.write(f"Доплата: {total_distance:.2f} × {rate_per_km} = {total_distance * rate_per_km:.2f} руб.")
                     st.write(f"Дата доставки: {delivery_date.strftime('%d.%m.%Y')} ({delivery_date.strftime('%A')})")
+                    st.write(f"Использован рейс: {use_route_rate}")
             except ValueError as e:
                 st.error(f"Ошибка: {e}")
             except Exception as e:
