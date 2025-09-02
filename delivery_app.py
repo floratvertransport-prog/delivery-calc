@@ -9,16 +9,23 @@ from math import radians, sin, cos, sqrt, atan2
 
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton,
-    QComboBox, QCalendarWidget, QMessageBox, QCheckBox
+    QComboBox, QCalendarWidget, QCheckBox
 )
 from PyQt5.QtCore import QDate, Qt
+from dotenv import load_dotenv
+
+
+# --------------------------
+# Загрузка переменных окружения
+# --------------------------
+load_dotenv()
+ORS_API_KEY = os.getenv("ORS_API_KEY")
 
 
 # --------------------------
 # Константы
 # --------------------------
 CACHE_FILE = "cache.json"
-GIT_REPO = "https://******@github.com/floratvertransport-prog/delivery-calc.git"
 GIT_BRANCH = "main"
 
 BASE_PRICE_SMALL = 350
@@ -35,7 +42,7 @@ EXIT_POINTS = [
     (36.020937, 56.850973),
     (35.797443, 56.882207),
     (35.932805, 56.902966),
-    (35.804913, 56.831684)  # новая точка №7
+    (35.804913, 56.831684)  # точка выхода №7
 ]
 
 # --------------------------
@@ -77,18 +84,6 @@ RACES = {
 # Функции
 # --------------------------
 
-def haversine(coord1, coord2):
-    """Расстояние между двумя координатами по прямой"""
-    lon1, lat1 = coord1
-    lon2, lat2 = coord2
-    R = 6371.0
-    dlon = radians(lon2 - lon1)
-    dlat = radians(lat2 - lat1)
-    a = sin(dlat/2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon/2)**2
-    c = 2 * atan2(sqrt(a), sqrt(1-a))
-    return R * c
-
-
 def load_cache():
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
@@ -112,7 +107,6 @@ def git_push():
 
 
 def extract_locality(address):
-    """Определяем населённый пункт по адресу"""
     parts = address.split(",")
     if len(parts) > 1:
         return parts[1].strip()
@@ -120,23 +114,42 @@ def extract_locality(address):
 
 
 def is_in_tver(locality):
-    """Проверка, находится ли адрес в черте Твери"""
-    return locality.lower() in ["тверь", "г.Тверь", "г. тверь"]
+    return locality.lower() in ["тверь", "г. тверь", "г.Тверь"]
 
 
-def get_nearest_exit(coord):
-    min_dist = float("inf")
-    best = EXIT_POINTS[0]
-    for p in EXIT_POINTS:
-        d = haversine(coord, p)
-        if d < min_dist:
-            min_dist = d
-            best = p
-    return best
+def ors_distance(coord1, coord2):
+    url = "https://api.openrouteservice.org/v2/directions/driving-car"
+    headers = {"Authorization": ORS_API_KEY, "Content-Type": "application/json"}
+    body = {"coordinates": [[coord1[0], coord1[1]], [coord2[0], coord2[1]]]}
+    r = requests.post(url, json=body, headers=headers)
+    data = r.json()
+    return data["routes"][0]["summary"]["distance"] / 1000.0
+
+
+def get_distance(address, cache):
+    if address in cache:
+        return cache[address]["distance"]
+
+    # Геокодинг через Nominatim
+    geocode_url = "https://nominatim.openstreetmap.org/search"
+    params = {"q": address, "format": "json", "limit": 1}
+    r = requests.get(geocode_url, params=params)
+    result = r.json()
+    if not result:
+        return None
+    lon, lat = float(result[0]["lon"]), float(result[0]["lat"])
+    coord = (lon, lat)
+
+    # Вычисляем расстояния от всех точек выхода
+    distances = [ors_distance(exit_point, coord) for exit_point in EXIT_POINTS]
+    dist = min(distances)
+
+    cache[address] = {"distance": dist}
+    save_cache(cache)
+    return dist
 
 
 def find_race(locality, weekday):
-    """Определяем рейс"""
     races_today = RACES.get(weekday, {})
     for race_name, towns in races_today.items():
         if locality in towns:
@@ -189,7 +202,6 @@ class DeliveryApp(QWidget):
         address = self.address_input.text().strip()
         size = self.size_box.currentText()
         date = self.calendar.selectedDate().toPyDate()
-        weekday = date.strftime("%A")
         weekday_ru = date.strftime("%A")
 
         locality = extract_locality(address)
@@ -203,8 +215,7 @@ class DeliveryApp(QWidget):
             self.result_label.setText(f"Адрес в Твери. Стоимость: {price} руб.")
             return
 
-        # Поиск рейса
-        race = find_race(locality, date.strftime("%A"))
+        race = find_race(locality, weekday_ru)
         if race:
             self.race_checkbox.setVisible(True)
             tariff = TARIFF_RACE if self.race_checkbox.isChecked() else TARIFF_DEFAULT
@@ -212,14 +223,10 @@ class DeliveryApp(QWidget):
             self.race_checkbox.setVisible(False)
             tariff = TARIFF_DEFAULT
 
-        # Дистанция (заглушка, можно заменить API)
-        if locality in self.cache:
-            distance = self.cache[locality]["distance"]
-        else:
-            # заглушка — ставим 50 км
-            distance = 50
-            self.cache[locality] = {"distance": distance}
-            save_cache(self.cache)
+        distance = get_distance(address, self.cache)
+        if distance is None:
+            self.result_label.setText("Ошибка: не удалось определить расстояние.")
+            return
 
         base_price = {
             "маленький": BASE_PRICE_SMALL,
