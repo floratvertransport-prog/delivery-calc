@@ -7,6 +7,10 @@ import aiohttp
 import json
 import subprocess
 from datetime import date, datetime
+from streamlit_i18n import init, _
+
+# Инициализация i18n для русской локализации
+init("ru")
 
 # Установка заголовка вкладки
 st.set_page_config(page_title="Флора калькулятор (розница)", page_icon="favicon.png")
@@ -15,6 +19,13 @@ st.set_page_config(page_title="Флора калькулятор (розница
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     st.image("logo.png", width=533)
+
+# Словарь цен за размер груза
+cargo_prices = {
+    "маленький": 500,
+    "средний": 800,
+    "большой": 1200
+}
 
 # Функция Haversine
 def haversine(lat1, lon1, lat2, lon2):
@@ -92,7 +103,7 @@ reysy = {
         ["Кашин", "Калязин", "Кесова Гора"]
     ],
     1: [
-        ["Конаково", "Редкино", "Мокшино", "Новозавидовский", "Клин"],
+        ["Конаково", "Редкино", "Мокшино", "Новозавидовский", "Клин", "Завидово"],
         ["Руза", "Волоколамск", "Шаховская", "Лотошино"]
     ],
     2: [
@@ -276,6 +287,8 @@ def extract_locality(address):
     for locality in distance_table.keys():
         if locality.lower() in address.lower():
             return locality
+    if 'завидово' in address.lower():
+        return 'Новозавидовский'  # Приведение "Завидово" к "Новозавидовский" для соответствия рейсу
     cache = load_cache()
     for locality in cache.keys():
         if locality.lower() in address.lower():
@@ -371,10 +384,10 @@ routing_api_key = os.environ.get("ORS_API_KEY")
 if not api_key:
     st.error("Ошибка: API-ключ для геокодирования не настроен. Обратитесь к администратору.")
 else:
-    cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
-    address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
-    delivery_date = st.date_input("Дата доставки", value=date(2025, 9, 1), format="DD.MM.YYYY")
-    admin_password = st.text_input("Админ пароль для отладки (оставьте пустым для обычного режима)", type="password")
+    cargo_size = st.selectbox(_("Размер груза"), ["маленький", "средний", "большой"])
+    address = st.text_input(_("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')"), value="Тверская область, ")
+    delivery_date = st.date_input(_("Дата доставки"), value=date(2025, 9, 1), format="DD.MM.YYYY")
+    admin_password = st.text_input(_("Админ пароль для отладки (оставьте пустым для обычного режима)"), type="password")
     if admin_password == "admin123":
         st.write("Точки выхода из Твери:")
         for i, point in enumerate(exit_points, 1):
@@ -412,7 +425,7 @@ else:
             st.write("Кэш расстояний:")
             for locality, data in cache.items():
                 st.write(f"{locality}: {data['distance']} км (точка выхода: {data['exit_point']})")
-    if st.button("Рассчитать"):
+    if st.button(_("Рассчитать")):
         if address:
             try:
                 dest_lat, dest_lon = geocode_address(address, api_key)
@@ -422,10 +435,10 @@ else:
                     if 'use_route' not in st.session_state:
                         st.session_state.use_route = False
                     st.write("Доставка по рейсу вместе с оптовыми заказами")
-                    if st.checkbox("Использовать доставку по рейсу", value=st.session_state.use_route):
+                    if st.checkbox(_("Использовать доставку по рейсу"), value=st.session_state.use_route):
                         if not st.session_state.get('route_confirmed', False):
-                            if st.button("Подтвердить использование рейса"):
-                                confirm = st.radio("Вы уверены, что данный заказ можно доставить по рейсу вместе с оптовыми заказами?", ("Нет", "Да"))
+                            if st.button(_("Подтвердить использование рейса")):
+                                confirm = st.radio(_("Вы уверены, что данный заказ можно доставить по рейсу вместе с оптовыми заказами?"), ("Нет", "Да"))
                                 if confirm == "Да":
                                     st.session_state.use_route = True
                                     st.session_state.route_confirmed = True
