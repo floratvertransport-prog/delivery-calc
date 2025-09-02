@@ -373,7 +373,7 @@ if not api_key:
 else:
     cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
     address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
-    delivery_date = st.date_input("Дата доставки", value=date(2025, 9, 1), format="DD.MM.YYYY", first_day=0)
+    delivery_date = st.date_input("Дата доставки", value=date(2025, 9, 1), format="DD.MM.YYYY")
     admin_password = st.text_input("Админ пароль для отладки (оставьте пустым для обычного режима)", type="password")
     if admin_password == "admin123":
         st.write("Точки выхода из Твери:")
