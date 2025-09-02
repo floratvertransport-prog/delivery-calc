@@ -2,13 +2,14 @@ import sys
 import os
 import json
 import requests
+import subprocess
 from datetime import datetime
 from math import radians, cos, sin, sqrt, atan2
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QPushButton, QVBoxLayout,
-    QHBoxLayout, QComboBox, QCalendarWidget, QMessageBox, QCheckBox
+    QComboBox, QCalendarWidget, QMessageBox, QCheckBox
 )
-from PyQt5.QtCore import QDate, Qt
+from PyQt5.QtCore import Qt
 
 # ========================
 # Настройки
@@ -19,6 +20,11 @@ if not ORS_API_KEY:
     raise ValueError("ORS_API_KEY не найден! Установите его в Render → Environment Variables.")
 
 CACHE_FILE = "cache.json"
+GIT_BRANCH = "main"
+
+GIT_REPO = os.getenv("GIT_REPO")
+GIT_USER = os.getenv("GIT_USER")
+GIT_TOKEN = os.getenv("GIT_TOKEN")
 
 BASE_PRICES = {
     "маленький": 350,
@@ -87,6 +93,29 @@ def load_cache():
 def save_cache(cache):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=4)
+    git_push()
+
+def git_push():
+    try:
+        if not all([GIT_REPO, GIT_USER, GIT_TOKEN]):
+            print("GIT_REPO / GIT_USER / GIT_TOKEN не заданы в Environment Variables. Автопуш отключён.")
+            return
+
+        # Подменяем https://github.com/... на https://USER:TOKEN@github.com/...
+        repo_url = GIT_REPO.replace(
+            "https://", f"https://{GIT_USER}:{GIT_TOKEN}@"
+        )
+
+        subprocess.run(["git", "config", "user.email", f"{GIT_USER}@users.noreply.github.com"], check=True)
+        subprocess.run(["git", "config", "user.name", GIT_USER], check=True)
+
+        subprocess.run(["git", "remote", "set-url", "origin", repo_url], check=True)
+        subprocess.run(["git", "add", CACHE_FILE], check=True)
+        subprocess.run(["git", "commit", "-m", "Update cache"], check=True)
+        subprocess.run(["git", "push", "origin", GIT_BRANCH], check=True)
+        print("Кэш успешно запушен в GitHub.")
+    except subprocess.CalledProcessError as e:
+        print("Ошибка git push:", e)
 
 def haversine(lon1, lat1, lon2, lat2):
     R = 6371
@@ -111,9 +140,7 @@ def geocode_address(address):
 def calculate_distance(lat, lon):
     nearest_exit = min(EXIT_POINTS, key=lambda p: haversine(lon, lat, p[0], p[1]))
     url = "https://api.openrouteservice.org/v2/directions/driving-car"
-    body = {
-        "coordinates": [[nearest_exit[0], nearest_exit[1]], [lon, lat]]
-    }
+    body = {"coordinates": [[nearest_exit[0], nearest_exit[1]], [lon, lat]]}
     headers = {"Authorization": ORS_API_KEY, "Content-Type": "application/json"}
     r = requests.post(url, json=body, headers=headers, timeout=10)
     r.raise_for_status()
