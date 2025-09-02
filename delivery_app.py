@@ -1,88 +1,82 @@
 import sys
 import os
 import json
-import subprocess
-import locale
 import requests
 from datetime import datetime
-from math import radians, sin, cos, sqrt, atan2
-
+from math import radians, cos, sin, sqrt, atan2
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton,
-    QComboBox, QCalendarWidget, QCheckBox
+    QApplication, QWidget, QLabel, QLineEdit, QPushButton, QVBoxLayout,
+    QHBoxLayout, QComboBox, QCalendarWidget, QMessageBox, QCheckBox
 )
 from PyQt5.QtCore import QDate, Qt
-from dotenv import load_dotenv
 
+# ========================
+# Настройки
+# ========================
 
-# --------------------------
-# Загрузка переменных окружения
-# --------------------------
-load_dotenv()
 ORS_API_KEY = os.getenv("ORS_API_KEY")
+if not ORS_API_KEY:
+    raise ValueError("ORS_API_KEY не найден! Установите его в Render → Environment Variables.")
 
-
-# --------------------------
-# Константы
-# --------------------------
 CACHE_FILE = "cache.json"
-GIT_BRANCH = "main"
 
-BASE_PRICE_SMALL = 350
-BASE_PRICE_MEDIUM = 700
-BASE_PRICE_LARGE = 1000
+BASE_PRICES = {
+    "маленький": 350,
+    "средний": 700,
+    "большой": 1000,
+}
 
-TARIFF_DEFAULT = 32
-TARIFF_RACE = 15
+RATE_NORMAL = 32
+RATE_ROUTE = 15
 
 EXIT_POINTS = [
-    (36.055364, 56.795587),
-    (35.871802, 56.808677),
-    (35.804913, 56.831684),
-    (36.020937, 56.850973),
-    (35.797443, 56.882207),
-    (35.932805, 56.902966),
-    (35.804913, 56.831684)  # точка выхода №7
+    (36.055364, 56.795587),  # Точка 1
+    (35.871802, 56.808677),  # Точка 2
+    (35.804913, 56.831684),  # Точка 3
+    (36.020937, 56.850973),  # Точка 4
+    (35.797443, 56.882207),  # Точка 5
+    (35.932805, 56.902966),  # Точка 6
+    (35.804913, 56.831684),  # Точка 7 (новая)
 ]
 
-# --------------------------
-# Рейсы по дням недели
-# --------------------------
-RACES = {
+# ========================
+# Рейсы
+# ========================
+
+ROUTES = {
     "Понедельник": {
         "РЖ_СЦ_ЗБ_ЗД_ЖК_ТЦ_ВЛ_НЛ_ОЛ_ВЛ": [
             "Великие Луки", "Жарковский", "Торопец", "Западная Двина",
             "Нелидово", "Оленино", "Зубцов", "Ржев", "Старица"
         ],
-        "КШ_КЗ_КГ": ["Кашин", "Калязин", "Кесова Гора"]
+        "КШ_КЗ_КГ": ["Кашин", "Калязин", "Кесова Гора"],
     },
     "Вторник": {
         "КВ_КЛ": ["Конаково", "Редкино", "Мокшино", "Новозавидовский", "Клин"],
-        "ЛШ_ШХ_ВК_РЗ": ["Руза", "Волоколамск", "Шаховская", "Лотошино"]
+        "ЛШ_ШХ_ВК_РЗ": ["Руза", "Волоколамск", "Шаховская", "Лотошино"],
     },
     "Среда": {
         "КМ_ДБ": ["Дубна", "Кимры"],
         "РЖ_СЦ_ЗБ_ЗД_ЖК_ТЦ_ВЛ_НЛ_ОЛ_ВЛ": ["Старица", "Ржев", "Зубцов"],
-        "СЛЖ_ОСТ_КУВ": ["Кувшиново", "Осташков", "Селижарово", "Пено"]
+        "СЛЖ_ОСТ_КУВ": ["Кувшиново", "Осташков", "Селижарово", "Пено"],
     },
     "Четверг": {
         "РЖ_СЦ_ЗБ_ЗД_ЖК_ТЦ_ВЛ_НЛ_ОЛ_ВЛ": [
             "Великие Луки", "Жарковский", "Торопец", "Западная Двина",
             "Нелидово", "Оленино"
         ],
-        "ТО_СП_ВВ_БГ_УД": ["Бологое"]
+        "ТО_СП_ВВ_БГ_УД": ["Бологое"],
     },
     "Пятница": {
         "ТО_СП_ВВ_БГ_УД": ["Удомля", "Вышний Волочек", "Спирово", "Торжок", "Лихославль"],
         "РШ_МХ_ЛС_СД": ["Лесное", "Максатиха", "Рамешки"],
-        "БК_СН_КХ_ВГ": ["Сандово", "Весьегонск", "Красный Холм", "Сонково", "Бежецк"]
-    }
+        "БК_СН_КХ_ВГ": ["Сандово", "Весьегонск", "Красный Холм", "Сонково", "Бежецк"],
+    },
 }
 
-
-# --------------------------
-# Функции
-# --------------------------
+# ========================
+# Вспомогательные функции
+# ========================
 
 def load_cache():
     if os.path.exists(CACHE_FILE):
@@ -90,104 +84,92 @@ def load_cache():
             return json.load(f)
     return {}
 
-
 def save_cache(cache):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=4)
-    git_push()
 
+def haversine(lon1, lat1, lon2, lat2):
+    R = 6371
+    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return R * c
 
-def git_push():
-    try:
-        subprocess.run(["git", "add", CACHE_FILE], check=True)
-        subprocess.run(["git", "commit", "-m", "Update cache"], check=True)
-        subprocess.run(["git", "push", "origin", GIT_BRANCH], check=True)
-    except Exception as e:
-        print("Git push error:", e)
-
-
-def extract_locality(address):
-    parts = address.split(",")
-    if len(parts) > 1:
-        return parts[1].strip()
-    return address.strip()
-
-
-def is_in_tver(locality):
-    return locality.lower() in ["тверь", "г. тверь", "г.Тверь"]
-
-
-def ors_distance(coord1, coord2):
-    url = "https://api.openrouteservice.org/v2/directions/driving-car"
-    headers = {"Authorization": ORS_API_KEY, "Content-Type": "application/json"}
-    body = {"coordinates": [[coord1[0], coord1[1]], [coord2[0], coord2[1]]]}
-    r = requests.post(url, json=body, headers=headers)
+def geocode_address(address):
+    url = f"https://api.openrouteservice.org/geocode/search?api_key={ORS_API_KEY}&text={address}"
+    r = requests.get(url, timeout=10)
+    r.raise_for_status()
     data = r.json()
-    return data["routes"][0]["summary"]["distance"] / 1000.0
+    if "features" in data and data["features"]:
+        coords = data["features"][0]["geometry"]["coordinates"]
+        lon, lat = coords
+        return lat, lon
+    return None, None
 
+def calculate_distance(lat, lon):
+    nearest_exit = min(EXIT_POINTS, key=lambda p: haversine(lon, lat, p[0], p[1]))
+    url = "https://api.openrouteservice.org/v2/directions/driving-car"
+    body = {
+        "coordinates": [[nearest_exit[0], nearest_exit[1]], [lon, lat]]
+    }
+    headers = {"Authorization": ORS_API_KEY, "Content-Type": "application/json"}
+    r = requests.post(url, json=body, headers=headers, timeout=10)
+    r.raise_for_status()
+    data = r.json()
+    distance_km = data["features"][0]["properties"]["segments"][0]["distance"] / 1000
+    return distance_km * 2, nearest_exit
 
-def get_distance(address, cache):
-    if address in cache:
-        return cache[address]["distance"]
+def detect_route(date: datetime, city: str):
+    weekday = date.strftime("%A")
+    weekday_ru = {
+        "Monday": "Понедельник",
+        "Tuesday": "Вторник",
+        "Wednesday": "Среда",
+        "Thursday": "Четверг",
+        "Friday": "Пятница",
+        "Saturday": "Суббота",
+        "Sunday": "Воскресенье",
+    }[weekday]
 
-    # Геокодинг через Nominatim
-    geocode_url = "https://nominatim.openstreetmap.org/search"
-    params = {"q": address, "format": "json", "limit": 1}
-    r = requests.get(geocode_url, params=params)
-    result = r.json()
-    if not result:
-        return None
-    lon, lat = float(result[0]["lon"]), float(result[0]["lat"])
-    coord = (lon, lat)
-
-    # Вычисляем расстояния от всех точек выхода
-    distances = [ors_distance(exit_point, coord) for exit_point in EXIT_POINTS]
-    dist = min(distances)
-
-    cache[address] = {"distance": dist}
-    save_cache(cache)
-    return dist
-
-
-def find_race(locality, weekday):
-    races_today = RACES.get(weekday, {})
-    for race_name, towns in races_today.items():
-        if locality in towns:
-            return race_name
+    if weekday_ru in ROUTES:
+        for route_name, towns in ROUTES[weekday_ru].items():
+            if any(city.lower() in t.lower() for t in towns):
+                return route_name
     return None
 
-
-# --------------------------
+# ========================
 # GUI
-# --------------------------
+# ========================
+
 class DeliveryApp(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Калькулятор доставки по Твери и области")
-        self.resize(500, 400)
 
         self.cache = load_cache()
 
         layout = QVBoxLayout()
 
-        layout.addWidget(QLabel("Введите адрес доставки:"))
+        layout.addWidget(QLabel("Адрес доставки:"))
         self.address_input = QLineEdit()
         layout.addWidget(self.address_input)
 
         layout.addWidget(QLabel("Размер груза:"))
-        self.size_box = QComboBox()
-        self.size_box.addItems(["маленький", "средний", "большой"])
-        layout.addWidget(self.size_box)
+        self.size_combo = QComboBox()
+        self.size_combo.addItems(BASE_PRICES.keys())
+        layout.addWidget(self.size_combo)
 
-        layout.addWidget(QLabel("Выберите дату доставки:"))
+        layout.addWidget(QLabel("Дата доставки:"))
         self.calendar = QCalendarWidget()
         self.calendar.setFirstDayOfWeek(Qt.Monday)
-        locale.setlocale(locale.LC_TIME, "ru_RU.UTF-8")
+        self.calendar.setGridVisible(True)
         layout.addWidget(self.calendar)
 
-        self.race_checkbox = QCheckBox("Доставка по рейсу вместе с оптовыми заказами")
-        self.race_checkbox.setVisible(False)
-        layout.addWidget(self.race_checkbox)
+        self.route_checkbox = QCheckBox("Доставка по рейсу вместе с оптовыми заказами")
+        self.route_checkbox.setEnabled(False)
+        layout.addWidget(self.route_checkbox)
 
         self.calc_button = QPushButton("Рассчитать")
         self.calc_button.clicked.connect(self.calculate)
@@ -200,52 +182,50 @@ class DeliveryApp(QWidget):
 
     def calculate(self):
         address = self.address_input.text().strip()
-        size = self.size_box.currentText()
+        size = self.size_combo.currentText()
         date = self.calendar.selectedDate().toPyDate()
-        weekday_ru = date.strftime("%A")
 
-        locality = extract_locality(address)
-
-        if is_in_tver(locality):
-            price = {
-                "маленький": BASE_PRICE_SMALL,
-                "средний": BASE_PRICE_MEDIUM,
-                "большой": BASE_PRICE_LARGE
-            }[size]
-            self.result_label.setText(f"Адрес в Твери. Стоимость: {price} руб.")
+        if not address:
+            QMessageBox.warning(self, "Ошибка", "Введите адрес доставки")
             return
 
-        race = find_race(locality, weekday_ru)
-        if race:
-            self.race_checkbox.setVisible(True)
-            tariff = TARIFF_RACE if self.race_checkbox.isChecked() else TARIFF_DEFAULT
+        if address in self.cache:
+            data = self.cache[address]
+            distance, exit_point = data["distance"], tuple(data["exit_point"])
         else:
-            self.race_checkbox.setVisible(False)
-            tariff = TARIFF_DEFAULT
+            lat, lon = geocode_address(address)
+            if not lat:
+                QMessageBox.warning(self, "Ошибка", "Не удалось определить координаты")
+                return
+            distance, exit_point = calculate_distance(lat, lon)
+            self.cache[address] = {"distance": distance, "exit_point": exit_point}
+            save_cache(self.cache)
 
-        distance = get_distance(address, self.cache)
-        if distance is None:
-            self.result_label.setText("Ошибка: не удалось определить расстояние.")
-            return
+        city = address.split(",")[-1].strip()
+        route = detect_route(datetime.combine(date, datetime.min.time()), city)
 
-        base_price = {
-            "маленький": BASE_PRICE_SMALL,
-            "средний": BASE_PRICE_MEDIUM,
-            "большой": BASE_PRICE_LARGE
-        }[size]
+        if route:
+            self.route_checkbox.setEnabled(True)
+        else:
+            self.route_checkbox.setEnabled(False)
+            self.route_checkbox.setChecked(False)
 
-        total = base_price + distance * tariff
+        rate = RATE_ROUTE if self.route_checkbox.isChecked() else RATE_NORMAL
+        base_price = BASE_PRICES[size]
+        total = round(base_price + distance * rate)
+
         self.result_label.setText(
-            f"Населённый пункт: {locality}\n"
-            f"Километраж: {distance:.2f} км\n"
-            f"Тариф: {tariff} руб/км\n"
-            f"Стоимость: {round(total)} руб."
+            f"Стоимость доставки: {total} руб.\n"
+            f"Населённый пункт: {city}\n"
+            f"Километраж (туда-обратно): {distance:.1f} км\n"
+            f"Тариф: {rate} руб./км\n"
+            f"Использован рейс: {'Да' if self.route_checkbox.isChecked() else 'Нет'}"
         )
 
+# ========================
+# Запуск
+# ========================
 
-# --------------------------
-# Запуск приложения
-# --------------------------
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = DeliveryApp()
