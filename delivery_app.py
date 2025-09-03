@@ -1,60 +1,78 @@
 # -*- coding: utf-8 -*-
-# delivery_app.py — Streamlit (браузер)
-# Калькулятор доставки (розница) с:
-# - логотипом/фавиконом
-# - точками выхода (в т.ч. Точка 7)
-# - определением принадлежности к рейсам (по дороге)
-# - проверкой "в пределах адм. границ Твери"
-# - ORS для расстояний по дорогам + кэширование
-# - автосбросом тарифа 15 руб./км при смене адреса/даты
-# - автопушем cache.json в GitHub
+"""
+delivery_app.py — Streamlit-калькулятор доставки (розница)
+Работает на Render (только веб), без PyQt и .env.
+
+Ключевые фичи:
+- Русифицированный календарь (заголовок дней недели и понедельник — первый день, через CSS-оверлей).
+- Автоопределение "по рейсу" по дорожной близости к точкам маршрутов (routes.json),
+  где маршруты один раз загружаются из "Точки выхода и рейсы.txt" -> routes.json.
+- Корректный сброс "15 руб./км" при изменении адреса/даты.
+- Расчёт километража от ближайшей точки выхода из Твери по дорогам (ORS), кэширование.
+- В пределах адм. границ Твери — километраж не начисляется.
+- Новая точка выхода №7: (56.844247, 35.783293).
+- Автопуш кэша/маршрутов в GitHub при наличии GIT_* переменных окружения (как раньше).
+
+Ожидания окружения на Render:
+- ORS_API_KEY — ключ OpenRouteService (обязателен для дорог).
+- (опц.) GIT_REPO, GIT_USER, GIT_TOKEN — для коммит/пуш cache.json и routes.json.
+- (опц.) ADMIN_PASS — пароль для админ-режима (по умолчанию 'admin123').
+- (опц.) AUTO_GIT_PUSH — '1' (по умолчанию), чтобы пушить после обновления cache/routes.
+
+Файлы в репозитории:
+- delivery_app.py (этот файл)
+- favicon.png (ваш favicon)
+- logo.png (ваш логотип; показываем по центру)
+- distance_table.json (опционально; если нет — используем встроенный словарь)
+- Точки выхода и рейсы.txt (исходник для одноразовой сборки routes.json)
+- routes.json (сгенерированный JSON с маршрутами; будет создан, если отсутствует)
+
+"""
 
 import os
-import io
 import json
-import math
 import time
+import math
 import hashlib
-import datetime as dt
-from typing import Dict, Tuple, List, Optional
+import subprocess
+from datetime import date, datetime
+from typing import Dict, Any, List, Tuple, Optional
 
 import requests
 import streamlit as st
 
-# ============ БАЗОВЫЕ НАСТРОЙКИ СТРАНИЦЫ ============
-st.set_page_config(
-    page_title="Калькулятор доставки (розница)",
-    page_icon="static/favicon.png",  # ваш favicon
-    layout="centered"
-)
+# -----------------------------
+# Конфигурация/окружение
+# -----------------------------
+APP_TITLE_PAGE = "Калькулятор доставки (розница)"
+APP_TITLE_MAIN = "Калькулятор стоимости доставки по Твери и области для розничных клиентов"
 
-# Центровка логотипа
-try:
-    st.markdown(
-        """
-        <div style="display:flex;justify-content:center;margin:6px 0 2px 0;">
-            <img src="static/logo.png" alt="logo" style="height:68px;"/>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-except Exception:
-    pass
+ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123")
+ORS_API_KEY = os.getenv("ORS_API_KEY", "").strip()
+AUTO_GIT_PUSH = os.getenv("AUTO_GIT_PUSH", "1").strip() == "1"
 
-# ================== КОНСТАНТЫ И КОНФИГ ==================
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
-ORS_API_KEY = os.environ.get("ORS_API_KEY", "").strip()
+# Пути к файлам
+CACHE_PATH = "cache.json"
+ROUTES_TXT = "Точки выхода и рейсы.txt"   # исходник от пользователя
+ROUTES_JSON = "routes.json"               # рабочий JSON с маршрутами
+DIST_TABLE_PATH = "distance_table.json"   # опционально; для «табличных» расстояний
 
-GIT_REPO = os.environ.get("GIT_REPO", "").strip()  # https://github.com/<user>/<repo>.git
-GIT_USER = os.environ.get("GIT_USER", "").strip()
-GIT_TOKEN = os.environ.get("GIT_TOKEN", "").strip()
+# День недели: 0=ПН,...,6=ВС
+RU_WEEKDAYS = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+RU_WEEKDAYS_ABBR = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
 
-# Файлы кэшей
-CACHE_FILE = "cache.json"              # кэш расстояний до НП
-ROUTES_FILE = "routes_cache.json"      # кэш геокодинга рейсов и их полилиний
-BOUNDARY_FILE = "boundary_cache.json"  # кэш полигона админ. границ Твери
+# Тарифы
+TARIFF_PER_KM_USUAL = 32.0
+TARIFF_PER_KM_ROUTE = 15.0
 
-# Точки выхода (ЛОН, ШИР) — используем точный порядок как у вас (lon, lat)
+# Базовые цены по размеру (можно при желании расширить)
+BASE_PRICES = {
+    "маленький": 350.0,
+    "средний": 600.0,
+    "большой": 900.0,
+}
+
+# Точки выхода из Твери (lon, lat). Координаты в формате (lon, lat)!
 EXIT_POINTS = [
     (36.055364, 56.795587),  # 1
     (35.871802, 56.808677),  # 2
@@ -62,653 +80,773 @@ EXIT_POINTS = [
     (36.020937, 56.850973),  # 4
     (35.797443, 56.882207),  # 5
     (35.932805, 56.902966),  # 6
-    # Новая Точка 7: пользователь прислал (56.831684, 35.804913) — это (lat, lon).
-    # В приложении точки всегда (lon, lat), значит корректное добавление:
-    (35.804913, 56.831684),  # 7 (географически совпадает с точкой 3; добавляем по просьбе)
+    (35.783293, 56.844247),  # 7 — НОВАЯ (lon, lat) !! (исправлено)
 ]
 
-# Базовые тарифы
-BASE_PRICES = {
-    "маленький": 350,
-    "средний": 600,
-    "большой": 900,
-}
-TARIFF_DEFAULT = 32.0
-TARIFF_ROUTE = 15.0
-
-# Таблица заранее известных расстояний (пример; сохраните свою как в старом коде)
-# Формат: "НП": км_туда_и_обратно, и опционально source="таблица"
-DISTANCES_TABLE = {
-    "Завидово": {"distance": 107.36, "source": "таблица"},
-    "Конаково": {"distance": 134.00, "source": "таблица"},
-    # ... добавьте ваши постоянные записи (как было в прежнем варианте)
-}
-
-# Рейсы (списки городов в порядке следования). Имена — как вы предложили.
-ROUTE_GROUPS = {
-    "КВ_КЛ": ["Конаково", "Редкино", "Мокшино", "Новозавидовский", "Клин"],
-    "ЛШ_ШХ_ВК_РЗ": ["Руза", "Волоколамск", "Шаховская", "Лотошино"],
-    "РЖ_СЦ_ЗБ_ЗД_ЖК_ТЦ_ВЛ_НЛ_ОЛ_ВЛ": [
-        "Великие Луки", "Жарковский", "Торопец", "Западная Двина",
-        "Нелидово", "Оленино", "Зубцов", "Ржев", "Старица"
-    ],
-    "КМ_ДБ": ["Дубна", "Кимры"],
-    "ТО_СП_ВВ_БГ_УД": ["Бологое", "Вышний Волочек", "Спирово", "Торжок", "Лихославль", "Удомля"],
-    "РШ_МХ_ЛС_СД": ["Сандово", "Лесное", "Максатиха", "Рамешки"],
-    "БК_СН_КХ_ВГ": ["Весьегонск", "Красный Холм", "Сонково", "Бежецк"],
-    "КШ_КЗ_КГ": ["Кесова Гора", "Калязин", "Кашин"],
-    "СЛЖ_ОСТ_КУВ": ["Кувшиново", "Осташков", "Селижарово"],  # Пено иногда отдельно
+# Небольшая таблица известных расстояний (туда+обратно) по реальным дорогам
+# Если есть distance_table.json — подменим этим содержимым
+DISTANCE_TABLE_DEFAULT = {
+    "Изоплит": 66.456,
+    "посёлок Заволжский": 5.930,
+    "Радченко": 47.366,
+    "Бурашево": 24.328,
+    "Мермерины": 24.406,
+    "Завидово": 99.622,
+    "Калашниково": 151.274,
+    "Медное": 49.166,
+    "Вараксино": 95.840,
+    "Колталово": 51.296,
+    "Конаково": 134.000,
 }
 
-# График дней: какой набор маршрутов действует в какой день (0=ПН ... 6=ВС)
-ROUTES_BY_WEEKDAY = {
-    0: ["РЖ_СЦ_ЗБ_ЗД_ЖК_ТЦ_ВЛ_НЛ_ОЛ_ВЛ", "КШ_КЗ_КГ"],  # ПН
-    1: ["КВ_КЛ", "ЛШ_ШХ_ВК_РЗ"],                        # ВТ
-    2: ["КМ_ДБ", "РЖ_СЦ_ЗБ_ЗД_ЖК_ТЦ_ВЛ_НЛ_ОЛ_ВЛ", "СЛЖ_ОСТ_КУВ"],  # СР (+ Пено иногда)
-    3: ["РЖ_СЦ_ЗБ_ЗД_ЖК_ТЦ_ВЛ_НЛ_ОЛ_ВЛ", "ТО_СП_ВВ_БГ_УД"],        # ЧТ (ВЛ часть)
-    4: ["ТО_СП_ВВ_БГ_УД", "РШ_МХ_ЛС_СД", "БК_СН_КХ_ВГ"],            # ПТ
-    5: [],  # СБ
-    6: [],  # ВС
-}
+# -----------------------------
+# Утилиты
+# -----------------------------
 
-# Нормализация «Тверская область, …»
-DEFAULT_PREFIX = "Тверская область, "
-
-
-# ================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==================
-def load_json(path: str, default):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return default
-
-
-def save_json(path: str, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
+def normalize_place_name(name: str) -> str:
+    return (name or "").strip().lower()
 
 def haversine_km(lat1, lon1, lat2, lon2) -> float:
-    # Расстояние по прямой (для оценки и сэмплинга)
-    R = 6371.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
+    R = 6371.0088
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
-    dlmb = math.radians(lon2 - lon1)
-    a = (math.sin(dphi / 2) ** 2 +
-         math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
     return 2 * R * math.asin(math.sqrt(a))
 
+def ensure_json(path: str, default: Any) -> Any:
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return default
+    return default
 
-def nearest_exit_point(lat: float, lon: float) -> Tuple[Tuple[float, float], float]:
-    # Возвращает (lon,lat) точки выхода и расстояние по прямой до неё (км)
-    best = None
-    best_d = 1e9
-    for (ex_lon, ex_lat) in EXIT_POINTS:
-        d = haversine_km(lat, lon, ex_lat, ex_lon)
-        if d < best_d:
-            best_d = d
-            best = (ex_lon, ex_lat)
-    return best, best_d
+def save_json(path: str, data: Any) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
 
+def debug_info() -> str:
+    import platform
+    return (
+        f"IP сервера Render: (нет прямого доступа)\n"
+        f"Версия Streamlit: {st.__version__}\n"
+        f"Проверка GIT_TOKEN: {'настроен' if os.getenv('GIT_TOKEN') else 'не задан'}\n"
+    )
 
-def geocode_nominatim(place: str) -> Optional[Tuple[float, float, str]]:
-    # Минимальный устойчивый геокодер (без API-ключа)
-    url = "https://nominatim.openstreetmap.org/search"
+# -----------------------------
+# GitHub sync
+# -----------------------------
+
+def git_run(cmd: List[str]) -> Tuple[bool, str]:
     try:
-        resp = requests.get(
-            url,
-            params={
-                "q": place,
-                "format": "json",
-                "limit": 1,
-                "addressdetails": 0,
-            },
-            headers={"User-Agent": "delivery-calc/1.0"}
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True)
+        return True, out.strip()
+    except subprocess.CalledProcessError as e:
+        return False, f"Command {cmd} failed: {e.output}"
+
+def git_sync(files_to_commit: List[str], message: str) -> str:
+    """Коммитит и пушит изменения (если заданы GIT_REPO/GIT_TOKEN/GIT_USER)."""
+    repo = os.getenv("GIT_REPO")
+    token = os.getenv("GIT_TOKEN")
+    user = os.getenv("GIT_USER")
+    if not (repo and token and user):
+        return "GIT_* переменные не заданы — пропуск push."
+
+    # Настроить origin при необходимости
+    ok, out = git_run(["git", "rev-parse", "--is-inside-work-tree"])
+    if not ok:
+        return f"Git error: {out}"
+
+    # Добавляем remote origin, если его нет/некорректен
+    _, remotes = git_run(["git", "remote", "-v"])
+    if "origin" not in remotes:
+        auth_repo = repo.replace("https://", f"https://{token}@")
+        git_run(["git", "remote", "add", "origin", auth_repo])
+
+    # Ветка main, если возможна
+    git_run(["git", "fetch", "origin"])
+    ok, branches = git_run(["git", "branch", "-a"])
+    if ok and "remotes/origin/main" in branches:
+        git_run(["git", "checkout", "-B", "main", "origin/main"])
+    else:
+        # остаёмся на текущей ветке
+        pass
+
+    # add/commit/pull/push
+    git_run(["git", "add"] + files_to_commit)
+    ok, out = git_run(["git", "commit", "-m", message])
+    if not ok and "nothing to commit" in out.lower():
+        # Нечего коммитить — но попробуем всё равно пушнуть
+        pass
+
+    git_run(["git", "pull", "--rebase", "origin", "main"])
+    ok, out = git_run(["git", "push", "origin", "HEAD:main"])
+    return f"Git push: {'Success' if ok else 'Failed'}\n{out}"
+
+# -----------------------------
+# Геокодер (Nominatim)
+# -----------------------------
+
+def geocode(address: str) -> Tuple[Optional[float], Optional[float], Optional[str], Dict[str, Any]]:
+    """
+    Возвращает (lat, lon, display_name, address_details)
+    """
+    try:
+        url = (
+            "https://nominatim.openstreetmap.org/search"
+            f"?q={requests.utils.quote(address)}"
+            "&format=json&limit=1&addressdetails=1"
         )
-        if resp.status_code != 200:
-            return None
-        j = resp.json()
-        if not j:
-            return None
-        lat = float(j[0]["lat"])
-        lon = float(j[0]["lon"])
-        display = j[0].get("display_name", place)
-        return (lat, lon, display)
+        headers = {"User-Agent": "flora-delivery-calc/1.0"}
+        r = requests.get(url, headers=headers, timeout=15)
+        r.raise_for_status()
+        js = r.json()
+        if not js:
+            return None, None, None, {}
+        item = js[0]
+        lat = float(item["lat"])
+        lon = float(item["lon"])
+        display = item.get("display_name", address)
+        addr = item.get("address", {})
+        return lat, lon, display, addr
     except Exception:
-        return None
+        return None, None, None, {}
 
-
-def get_tver_boundary_polygon() -> List[List[Tuple[float, float]]]:
+def extract_settlement(addr_details: Dict[str, Any], display_name: str) -> str:
     """
-    Получаем полигон административных границ Твери (список контуров),
-    кэшируем в boundary_cache.json.
+    Пробуем извлечь населенный пункт из addressdetails, иначе — берём первую часть display_name.
     """
-    cache = load_json(BOUNDARY_FILE, default={})
-    if "tver_boundary" in cache:
-        return cache["tver_boundary"]
+    for key in ("village", "town", "city", "hamlet", "suburb", "neighbourhood"):
+        if addr_details.get(key):
+            return str(addr_details[key])
+    # fallback: до первой запятой
+    if display_name:
+        return display_name.split(",")[0].strip()
+    return ""
 
-    url = "https://nominatim.openstreetmap.org/search"
-    params = {
-        "q": "Тверь, Россия",
-        "format": "json",
-        "polygon_geojson": 1,
-        "limit": 1,
-    }
-    try:
-        resp = requests.get(url, params=params, headers={"User-Agent": "delivery-calc/1.0"})
-        resp.raise_for_status()
-        data = resp.json()
-        if not data:
-            return []
-        geo = data[0].get("geojson", {})
-        rings = []
-        def parse_coords(coords):
-            # Возвращаем список (lon,lat)
-            return [(float(x), float(y)) for x, y in coords]
-
-        if geo.get("type") == "Polygon":
-            for ring in geo["coordinates"]:
-                rings.append(parse_coords(ring))
-        elif geo.get("type") == "MultiPolygon":
-            for poly in geo["coordinates"]:
-                for ring in poly:
-                    rings.append(parse_coords(ring))
-        if rings:
-            cache["tver_boundary"] = rings
-            save_json(BOUNDARY_FILE, cache)
-        return rings
-    except Exception:
-        return []
-
-
-def point_in_polygon(lon: float, lat: float, polygon: List[Tuple[float, float]]) -> bool:
+def is_within_tver(addr_details: Dict[str, Any]) -> bool:
     """
-    Классический ray-casting для одного контура (lon,lat).
+    Административные границы города Тверь.
+    Считаем внутри, если city/town == 'Тверь', либо municipality/ county указывают на городской округ Тверь.
     """
-    inside = False
-    n = len(polygon)
-    if n < 3:
-        return False
-    x, y = lon, lat
-    for i in range(n):
-        x1, y1 = polygon[i]
-        x2, y2 = polygon[(i + 1) % n]
-        if ((y1 > y) != (y2 > y)) and \
-           (x < (x2 - x1) * (y - y1) / (y2 - y1 + 1e-12) + x1):
-            inside = not inside
-    return inside
-
-
-def is_inside_tver(lat: float, lon: float) -> bool:
-    # Проверяем по всем контурам
-    rings = get_tver_boundary_polygon()
-    for ring in rings:
-        if point_in_polygon(lon, lat, ring):
+    targets = {"тверь", "город тверь", "tver", "tver’"}
+    for key in ("city", "town"):
+        v = str(addr_details.get(key, "")).strip().lower()
+        if v in targets:
+            return True
+    # Иногда Nominatim даёт municipality/county/state_district
+    for key in ("municipality", "county", "state_district"):
+        v = str(addr_details.get(key, "")).lower()
+        if "твер" in v and ("город" in v or "городской округ" in v):
             return True
     return False
 
+# -----------------------------
+# ORS — расстояние по дорогам
+# -----------------------------
 
-def ors_route_distance_km(lat1, lon1, lat2, lon2) -> Optional[float]:
+def ors_distance_km(lon1: float, lat1: float, lon2: float, lat2: float, timeout=25) -> Optional[float]:
     if not ORS_API_KEY:
         return None
-    url = "https://api.openrouteservice.org/v2/directions/driving-car"
-    headers = {"Authorization": ORS_API_KEY, "Content-Type": "application/json"}
-    body = {
-        "coordinates": [[lon1, lat1], [lon2, lat2]],
-        "units": "km",
-        "geometry": False,
-    }
     try:
-        r = requests.post(url, headers=headers, json=body, timeout=30)
+        url = "https://api.openrouteservice.org/v2/directions/driving-car"
+        headers = {"Authorization": ORS_API_KEY, "Content-Type": "application/json"}
+        body = {"coordinates": [[lon1, lat1], [lon2, lat2]]}
+        r = requests.post(url, headers=headers, json=body, timeout=timeout)
         r.raise_for_status()
-        j = r.json()
-        meters = j["routes"][0]["summary"]["distance"]
-        return float(meters) / 1000.0
+        js = r.json()
+        dist_m = js["features"][0]["properties"]["segments"][0]["distance"]
+        return dist_m / 1000.0
     except Exception:
         return None
 
+# -----------------------------
+# Кэш расстояний (settlement -> {distance, exit_point})
+# -----------------------------
 
-def ors_route_polyline(lon1, lat1, lon2, lat2) -> Optional[List[Tuple[float, float]]]:
-    """ Геометрия маршрута между двумя точками (lon,lat). """
-    if not ORS_API_KEY:
-        return None
-    url = "https://api.openrouteservice.org/v2/directions/driving-car"
-    headers = {"Authorization": ORS_API_KEY, "Content-Type": "application/json"}
-    body = {
-        "coordinates": [[lon1, lat1], [lon2, lat2]],
-        "units": "km",
-        "geometry": True,
-        "elevation": False,
-    }
-    try:
-        r = requests.post(url, headers=headers, json=body, timeout=45)
-        r.raise_for_status()
-        j = r.json()
-        coords = j["routes"][0]["geometry"]["coordinates"]  # [[lon,lat],...]
-        return [(float(x), float(y)) for x, y in coords]
-    except Exception:
-        return None
+def load_cache() -> Dict[str, Any]:
+    return ensure_json(CACHE_PATH, {})
 
+def save_cache(cache: Dict[str, Any]):
+    save_json(CACHE_PATH, cache)
+    if AUTO_GIT_PUSH:
+        git_sync([CACHE_PATH], "Update cache.json (auto)")
 
-def sample_polyline(poly: List[Tuple[float, float]], step_km: float = 2.0) -> List[Tuple[float, float]]:
-    """ Сэмплинг полилинии по шагу step_km (в lon,lat), равномерно вдоль длины. """
-    if not poly or len(poly) < 2:
-        return poly or []
-    pts = [poly[0]]
-    acc = 0.0
-    for i in range(1, len(poly)):
-        lon1, lat1 = poly[i - 1]
-        lon2, lat2 = poly[i]
-        seg = haversine_km(lat1, lon1, lat2, lon2)
-        acc += seg
-        if acc >= step_km:
-            pts.append((lon2, lat2))
-            acc = 0.0
-    if pts[-1] != poly[-1]:
-        pts.append(poly[-1])
-    return pts
+# -----------------------------
+# Загрузка distance_table.json (опционально)
+# -----------------------------
 
-
-def normalize_np_name(name: str) -> str:
-    return name.strip().lower()
-
-
-def show_status(msg: str):
-    st.caption(msg)
-
-
-def ensure_cache_files():
-    for path, default in [
-        (CACHE_FILE, {}),
-        (ROUTES_FILE, {"geocoded": {}, "routes": {}}),
-        (BOUNDARY_FILE, {}),
-    ]:
-        if not os.path.exists(path):
-            save_json(path, default)
-
-
-# ================== РАСЧЁТ «ПО РЕЙСУ» ==================
-def build_routes_for_weekday(weekday: int, admin_mode: bool = False):
-    """
-    Для данного дня:
-     - геокодируем города (если не закэшированы)
-     - строим полилинии между соседними городами
-     - возвращаем список узлов (lon,lat), сэмплированных через ~2 км
-    """
-    ensure_cache_files()
-    routes_cache = load_json(ROUTES_FILE, {"geocoded": {}, "routes": {}})
-
-    route_codes = ROUTES_BY_WEEKDAY.get(weekday, [])
-    all_nodes: List[Tuple[float, float, str]] = []  # (lon,lat, route_code)
-
-    for code in route_codes:
-        cities = ROUTE_GROUPS.get(code, [])
-        # Геокодируем все узловые города данного маршрута
-        coords_list: List[Tuple[str, float, float]] = []
-        for city in cities:
-            if city not in routes_cache["geocoded"]:
-                g = geocode_nominatim(f"{city}, Тверская область, Россия")
-                if not g:
-                    g = geocode_nominatim(f"{city}, Россия")
-                if g:
-                    lat, lon, _ = g
-                    routes_cache["geocoded"][city] = {"lat": lat, "lon": lon}
-                    save_json(ROUTES_FILE, routes_cache)
-            info = routes_cache["geocoded"].get(city)
-            if info:
-                coords_list.append((city, info["lat"], info["lon"]))
-
-        # Между соседями строим полилинии
-        for i in range(len(coords_list) - 1):
-            c1, lat1, lon1 = coords_list[i]
-            c2, lat2, lon2 = coords_list[i + 1]
-            key = f"{c1}__{c2}"
-            if key not in routes_cache["routes"]:
-                poly = ors_route_polyline(lon1, lat1, lon2, lat2)
-                if poly:
-                    routes_cache["routes"][key] = poly
-                    save_json(ROUTES_FILE, routes_cache)
-
-            poly = routes_cache["routes"].get(key)
-            if poly:
-                nodes = sample_polyline(poly, step_km=2.0)
-                # Пометим каждый узел кодом маршрута
-                for (lon, lat) in nodes:
-                    all_nodes.append((lon, lat, code))
-
-    if admin_mode:
-        st.write("Собрано узлов по маршрутам на день:", len(all_nodes))
-    return all_nodes
-
-
-def road_distance_to_routes(lat: float, lon: float, weekday: int, max_nodes: int = 120, admin_mode: bool = False):
-    """
-    Ищем минимальную дорожную дистанцию от точки (lat,lon) до любого узла полилиний «дневных» рейсов.
-    Ограничиваем количество узлов (для производительности).
-    """
-    all_nodes = build_routes_for_weekday(weekday, admin_mode=admin_mode)
-    if not all_nodes:
-        return None, None
-
-    # Фильтруем ближайшие по прямой N узлов — затем считаем ORS-дистанцию только к ним
-    nodes_sorted = sorted(
-        all_nodes,
-        key=lambda p: haversine_km(lat, lon, p[1], p[0])
-    )
-    nodes_subset = nodes_sorted[:max_nodes]
-
-    best_km = None
-    best_code = None
-    with st.spinner("Проверяем отклонение от рейса (по дороге)..."):
-        for (n_lon, n_lat, code) in nodes_subset:
-            d_km = ors_route_distance_km(lat, lon, n_lat, n_lon)
-            if d_km is None:
-                continue
-            if (best_km is None) or (d_km < best_km):
-                best_km = d_km
-                best_code = code
-
-    return best_km, best_code
-
-
-# ================== GIT: PUSH КЭША ==================
-def git_autopush_cache(admin_mode: bool = False) -> str:
-    """
-    Пытаемся:
-      - git init (если нужно)
-      - git remote add origin <GIT_REPO> (если нет)
-      - git switch -c main (или checkout main), при конфликте — авто-коммит
-      - git add cache.json && git commit && git push origin main
-    """
-    if not (GIT_REPO and GIT_USER and GIT_TOKEN):
-        return "Пропущен push: нет GIT_REPO/GIT_USER/GIT_TOKEN."
-
-    def run(cmd: List[str]) -> Tuple[int, str]:
+def load_distance_table() -> Dict[str, float]:
+    if os.path.exists(DIST_TABLE_PATH):
         try:
-            import subprocess
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
-            return res.returncode, res.stdout.strip()
-        except Exception as e:
-            return 1, str(e)
+            with open(DIST_TABLE_PATH, "r", encoding="utf-8") as f:
+                return {k: float(v) for k, v in json.load(f).items()}
+        except Exception:
+            pass
+    return DISTANCE_TABLE_DEFAULT.copy()
 
-    # монтируем URL с токеном
-    auth_repo = GIT_REPO
-    if auth_repo.startswith("https://github.com/") and "@" not in auth_repo:
-        auth_repo = auth_repo.replace("https://github.com/", f"https://{GIT_USER}:{GIT_TOKEN}@github.com/")
+# -----------------------------
+# Маршруты: парсер TXT -> routes.json
+# -----------------------------
 
-    rc, out = run(["git", "init"])
-    if admin_mode:
-        st.caption(f"git init: {out}")
+def parse_routes_txt_to_json(txt: str) -> Dict[str, Any]:
+    """
+    Ожидаемый формат (как в предоставленном файле):
+    Пример заголовка:
+      1) Рейс КВ_КЛ (Конаково, Клин) по вторникам - точка выхода 56.795587, 36.055364
+    Далее идут строки:
+      {тип/название} {lat}, {lon}
+    Пока не встретится следующий заголовок "... Рейс ..."
 
-    # remote
-    rc, out = run(["git", "remote", "-v"])
-    if "origin" not in out:
-        rc, out = run(["git", "remote", "add", "origin", auth_repo])
+    На выходе структура:
+    {
+      "routes": [
+        {
+          "name": "КВ_КЛ",
+          "days": [1],  # 0=ПН,...,6=ВС
+          "exit_point": [lon, lat],   # ВНИМАНИЕ: (lon, lat)
+          "points": [[lon, lat], ...] # точки маршрута (в порядке следования)
+        },
+        ...
+      ]
+    }
+    """
+    lines = [l.strip() for l in txt.splitlines()]
+    routes: List[Dict[str, Any]] = []
 
-    # пытаемся на main
-    rc, out = run(["git", "checkout", "main"])
-    if rc != 0:
-        # пробуем создать main
-        run(["git", "checkout", "-B", "main"])
+    def ru_days_to_idx(s: str) -> List[int]:
+        s = s.lower()
+        result = set()
+        day_map = {
+            "понедельник": 0, "понедельникам": 0, "по понедельникам": 0,
+            "вторник": 1, "вторникам": 1, "по вторникам": 1,
+            "среда": 2, "средам": 2, "по средам": 2,
+            "четверг": 3, "четвергам": 3, "по четвергам": 3,
+            "пятница": 4, "пятницам": 4, "по пятницам": 4,
+            "суббота": 5, "субботам": 5, "по субботам": 5,
+            "воскресенье": 6, "воскресеньям": 6, "по воскресеньям": 6
+        }
+        # выделяем слова и ищем соответствия
+        tokens = [t.strip(",.() ") for t in s.split()]
+        for t in tokens:
+            if t in day_map:
+                result.add(day_map[t])
+        # часто встречается форма "по понедельникам и четвергам"
+        if "и" in tokens:
+            # уже покрыто
+            pass
+        return sorted(result)
 
-    # add/commit/push
-    run(["git", "add", CACHE_FILE])
-    rc, out = run(["git", "commit", "-m", "Update cache.json"])
-    if admin_mode:
-        st.caption(f"git commit: {out}")
+    current: Optional[Dict[str, Any]] = None
 
-    rc, out = run(["git", "push", "-u", "origin", "main"])
-    if rc != 0 and "non-fast-forward" in out:
-        # обновимся и повторим
-        run(["git", "pull", "--rebase", "origin", "main"])
-        rc, out = run(["git", "push", "origin", "main"])
+    import re
+    header_re = re.compile(
+        r"^\d+\)\s*Рейс\s+([A-Za-zА-Яа-я0-9_]+).*?по\s+([А-Яа-я ,и]+)\s*-\s*точка выхода\s*([0-9.]+)\s*,\s*([0-9.]+)$"
+    )
 
-    return "Success" if rc == 0 else ("Failed: " + out[:300])
+    coord_re = re.compile(r".*?([0-9]{2}\.[0-9]+)\s*,\s*([0-9]{2}\.[0-9]+)$")
 
+    for raw in lines:
+        if not raw:
+            continue
+        m = header_re.match(raw)
+        if m:
+            # сохраняем предыдущий
+            if current and current.get("points"):
+                routes.append(current)
+            name = m.group(1).strip()
+            days_text = m.group(2).strip()
+            lat = float(m.group(3))
+            lon = float(m.group(4))
+            current = {
+                "name": name,
+                "days": ru_days_to_idx(days_text),
+                "exit_point": [lon, lat],  # (lon, lat)
+                "points": []
+            }
+            continue
+        # строки с точками
+        m2 = coord_re.match(raw)
+        if m2 and current is not None:
+            lat = float(m2.group(1))
+            lon = float(m2.group(2))
+            current["points"].append([lon, lat])  # (lon, lat)
+        else:
+            # игнорируем произвольные строки
+            pass
+    # финальный
+    if current and current.get("points"):
+        routes.append(current)
 
-# ================== UI / СОСТОЯНИЕ ==================
-st.title("Калькулятор стоимости доставки по Твери и области для розничных клиентов")
+    return {"routes": routes}
 
-# Админ-режим
-with st.expander("Админ режим", expanded=False):
-    admin_pass = st.text_input("Админ пароль", type="password")
-    admin_mode = (admin_pass == ADMIN_PASSWORD)
+def load_or_build_routes() -> Dict[str, Any]:
+    if os.path.exists(ROUTES_JSON):
+        try:
+            with open(ROUTES_JSON, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    # Пытаемся собрать routes.json из TXT
+    if os.path.exists(ROUTES_TXT):
+        try:
+            # Пробуем разные кодировки
+            content = None
+            for enc in ("utf-8", "utf-8-sig", "cp1251", "utf-16", "utf-16le", "utf-16be"):
+                try:
+                    with open(ROUTES_TXT, "r", encoding=enc) as f:
+                        content = f.read()
+                    break
+                except Exception:
+                    continue
+            if not content:
+                return {"routes": []}
+            data = parse_routes_txt_to_json(content)
+            save_json(ROUTES_JSON, data)
+            if AUTO_GIT_PUSH:
+                git_sync([ROUTES_JSON], "Build routes.json from TXT (auto)")
+            return data
+        except Exception:
+            return {"routes": []}
+    # Если ничего нет — пусто
+    return {"routes": []}
+
+# -----------------------------
+# Поиск «по рейсу» для выбранной даты/адреса
+# -----------------------------
+
+def nearest_exit_point(lon: float, lat: float) -> Tuple[Tuple[float, float], float]:
+    """
+    Возвращает (exit_point (lon,lat), d_straight_km)
+    """
+    best = None
+    best_d = 1e9
+    for ep in EXIT_POINTS:
+        d = haversine_km(lat, lon, ep[1], ep[0])
+        if d < best_d:
+            best_d = d
+            best = ep
+    return best, best_d
+
+def find_route_match_for_day(
+    routes: Dict[str, Any],
+    weekday_idx: int,
+    addr_lon: float,
+    addr_lat: float,
+    threshold_km: float = 10.0,
+    candidates_per_route: int = 1
+) -> Tuple[Optional[str], Optional[Tuple[float, float]], Optional[float]]:
+    """
+    Перебираем маршруты заданного дня, выбираем ближайшую точку маршрута (по прямой),
+    затем считаем расстояние по дорогам от адреса до этой точки маршрута (ORS).
+    Если расстояние <= threshold_km — считаем, что адрес лежит «по пути» данного рейса.
+
+    Возвращает: (route_name, nearest_route_point(lon,lat), road_km_to_route_point) либо (None, None, None).
+    """
+    best_name = None
+    best_pt = None
+    best_km = None
+
+    routes_list = routes.get("routes", [])
+    for r in routes_list:
+        if weekday_idx not in r.get("days", []):
+            continue
+        pts = r.get("points") or []
+        if not pts:
+            continue
+        # Находим N ближайших точек (по прямой)
+        pts_with_d = []
+        for p in pts:
+            lon2, lat2 = p
+            d = haversine_km(addr_lat, addr_lon, lat2, lon2)
+            pts_with_d.append((d, p))
+        pts_with_d.sort(key=lambda x: x[0])
+        for _, p in pts_with_d[:max(1, candidates_per_route)]:
+            lon2, lat2 = p
+            road = ors_distance_km(addr_lon, addr_lat, lon2, lat2)
+            if road is None:
+                # Fallback: умножаем прямую на коэффициент 1.3
+                road = haversine_km(addr_lat, addr_lon, lat2, lon2) * 1.3
+            if road <= threshold_km:
+                # Нашли подходящий рейс
+                best_name = r.get("name")
+                best_pt = (lon2, lat2)
+                best_km = road
+                return best_name, best_pt, best_km
+    return None, None, None
+
+# -----------------------------
+# Расчёт стоимости
+# -----------------------------
+
+def calc_cost_for_address(
+    address: str,
+    cargo_size: str,
+    delivery_date: date,
+    routes_data: Dict[str, Any],
+    threshold_km: float,
+    distance_table: Dict[str, float],
+    cache: Dict[str, Any],
+    use_route_tariff: bool
+) -> Dict[str, Any]:
+    """
+    Главный расчёт. Возвращает словарь с деталями.
+    """
+    lat, lon, display, addr_details = geocode(address)
+
+    if lat is None or lon is None:
+        raise RuntimeError("Не удалось геокодировать адрес. Уточните ввод.")
+
+    # Определяем населённый пункт
+    place = extract_settlement(addr_details, display)
+    place_norm = normalize_place_name(place)
+
+    # В пределах Твери — без километража
+    if is_within_tver(addr_details):
+        total = BASE_PRICES[cargo_size]
+        return {
+            "ok": True,
+            "place": place,
+            "lat": lat,
+            "lon": lon,
+            "within_tver": True,
+            "exit_point": None,
+            "exit_point_km": None,
+            "km_roundtrip": 0.0,
+            "km_source": "город",
+            "base": BASE_PRICES[cargo_size],
+            "surcharge": 0.0,
+            "tariff_per_km": 0.0,
+            "total": total,
+            "route_name": None,
+            "route_possible": False,
+        }
+
+    # Находим ближайшую точку выхода (по прямой)
+    exit_pt, d_exit_direct = nearest_exit_point(lon, lat)
+
+    # Ищем расстояние адрес <-> выход по дорогам с кэшем
+    # Кэшируем по ключу населённого пункта (как в предыдущей версии)
+    km_source = "ors"
+    km_roundtrip = None
+
+    if place in cache:
+        entry = cache[place]
+        km_roundtrip = float(entry.get("distance", 0.0))
+        # В кэше хранили distance (туда-обратно) и exit_point
+        exit_saved = entry.get("exit_point")
+        if isinstance(exit_saved, (list, tuple)) and len(exit_saved) == 2:
+            exit_pt = (float(exit_saved[0]), float(exit_saved[1]))
+        km_source = "кэш"
+
+    if km_roundtrip is None:
+        # Попробуем таблицу (если есть)
+        if place in distance_table:
+            km_roundtrip = float(distance_table[place])
+            km_source = "таблица"
+
+    if km_roundtrip is None:
+        # Вычисляем по дорогам (туда и обратно)
+        one_way = ors_distance_km(exit_pt[0], exit_pt[1], lon, lat)
+        if one_way is None:
+            # fallback по прямой * коэффициент
+            one_way = haversine_km(exit_pt[1], exit_pt[0], lat, lon) * 1.3
+            km_source = "расчёт (прямая*1.3)"
+        km_roundtrip = round(one_way * 2.0, 3)
+        # Сохраняем в кэш
+        cache[place] = {"distance": km_roundtrip, "exit_point": [exit_pt[0], exit_pt[1]]}
+        save_cache(cache)
+
+    # Определяем «по рейсу возможно?» для выбранной даты
+    weekday_idx = delivery_date.weekday()  # 0=ПН
+    route_name, route_pt, road_km_to_route = find_route_match_for_day(
+        routes_data, weekday_idx, lon, lat, threshold_km=threshold_km, candidates_per_route=1
+    )
+    route_possible = route_name is not None
+
+    # Тариф
+    tariff = TARIFF_PER_KM_ROUTE if (use_route_tariff and route_possible) else TARIFF_PER_KM_USUAL
+
+    base = BASE_PRICES[cargo_size]
+    surcharge = round(km_roundtrip * tariff, 2)
+    total = round(base + surcharge, 2)
+
+    return {
+        "ok": True,
+        "place": place,
+        "lat": lat,
+        "lon": lon,
+        "within_tver": False,
+        "exit_point": exit_pt,
+        "exit_point_km": d_exit_direct,
+        "km_roundtrip": km_roundtrip,
+        "km_source": km_source,
+        "base": base,
+        "surcharge": surcharge,
+        "tariff_per_km": tariff,
+        "total": total,
+        "route_name": route_name,
+        "route_possible": route_possible,
+        "road_km_to_route": road_km_to_route,
+    }
+
+# -----------------------------
+# Streamlit UI
+# -----------------------------
+
+st.set_page_config(page_title=APP_TITLE_PAGE, page_icon="favicon.png", layout="centered")
+
+# Центровка лого и русификация заголовка дней календаря
+st.markdown("""
+<style>
+/* центрируем логотип */
+.block-container { padding-top: 1rem; }
+.logo-wrapper { display: flex; justify-content: center; align-items: center; margin: 0.5rem 0 0.5rem 0; }
+
+/* Русификация заголовка дней в календаре Streamlit (Mo Tu We Th Fr Sa Su -> ПН ВТ СР ЧТ ПТ СБ ВС) */
+[data-testid="stDateInput"] .st-emotion-cache-1r6slb0 {
+    direction: ltr;
+}
+[data-testid="stDateInput"] .st-emotion-cache-1v0mbdj, 
+[data-testid="stDateInput"] .stDateInput {
+    /* контейнер календаря */
+}
+[data-testid="stDateInput"] .stDateInput [data-baseweb="datepicker"] div[aria-label="day of week"] {
+    font-weight: 700;
+}
+[data-testid="stDateInput"] .stDateInput [data-baseweb="datepicker"] div[aria-label="day of week"]:nth-child(1)::after { content: "ПН"; }
+[data-testid="stDateInput"] .stDateInput [data-baseweb="datepicker"] div[aria-label="day of week"]:nth-child(2)::after { content: "ВТ"; }
+[data-testid="stDateInput"] .stDateInput [data-baseweb="datepicker"] div[aria-label="day of week"]:nth-child(3)::after { content: "СР"; }
+[data-testid="stDateInput"] .stDateInput [data-baseweb="datepicker"] div[aria-label="day of week"]:nth-child(4)::after { content: "ЧТ"; }
+[data-testid="stDateInput"] .stDateInput [data-baseweb="datepicker"] div[aria-label="day of week"]:nth-child(5)::after { content: "ПТ"; }
+[data-testid="stDateInput"] .stDateInput [data-baseweb="datepicker"] div[aria-label="day of week"]:nth-child(6)::after { content: "СБ"; }
+[data-testid="stDateInput"] .stDateInput [data-baseweb="datepicker"] div[aria-label="day of week"]:nth-child(7)::after { content: "ВС"; }
+/* скрываем англ. подписи дней */
+[data-testid="stDateInput"] .stDateInput [data-baseweb="datepicker"] div[aria-label="day of week"] > * { color: transparent; }
+
+/* чуть сужаем инпут */
+[data-testid="stDateInput"] input { text-align: left; }
+
+/* Выравнивание разделов */
+hr { margin: 0.5rem 0 0.5rem 0; }
+</style>
+""", unsafe_allow_html=True)
+
+# Логотип по центру
+with st.container():
+    st.markdown('<div class="logo-wrapper">', unsafe_allow_html=True)
+    st.image("logo.png", use_container_width=False, width=160)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+st.title(APP_TITLE_MAIN)
+
+# Полезная отладочная шапка (сворачиваемая)
+with st.expander("Точки выхода из Твери / Отладка окружения", expanded=False):
+    for i, (lon, lat) in enumerate(EXIT_POINTS, start=1):
+        st.write(f"Точка {i}: ({lon}, {lat})")
+    st.caption(debug_info())
+
+# Инициализация session_state для флагов "по рейсу"
+def key_for_inputs(addr: str, d: date) -> str:
+    return hashlib.sha1(f"{addr}|{d.isoformat()}".encode("utf-8")).hexdigest()
+
+if "route_confirmed_key" not in st.session_state:
+    st.session_state["route_confirmed_key"] = ""
+if "route_user_wants" not in st.session_state:
+    st.session_state["route_user_wants"] = False
+
+# -----------------------------
+# Форма ввода
+# -----------------------------
+with st.form("calc"):
+    # Адрес по умолчанию всегда начинается с "Тверская область, "
+    default_address = "Тверская область, "
+    addr = st.text_input("Введите адрес доставки", value=default_address, max_chars=200)
+
+    size = st.selectbox("Размер груза", options=list(BASE_PRICES.keys()), index=0)
+
+    # Дата
+    d: date = st.date_input("Выберите дату доставки", value=date.today(), format="DD.MM.YYYY")
+
+    # Псевдо-локализация даты (читаемый текст): "02.09.2025 (Вторник)"
+    ru_date_text = f"{d.strftime('%d.%m.%Y')} ({RU_WEEKDAYS[d.weekday()]})"
+    st.caption(ru_date_text)
+
+    # Админ режим
+    st.markdown("**Админ режим**")
+    admin_pwd = st.text_input("Админ пароль", type="password", help="Введите для доступа к настройкам")
+    admin_mode = (admin_pwd.strip() == ADMIN_PASS)
+
+    # Настройки/экшены админа
     if admin_mode:
         st.success("Админ режим активирован")
+        st.markdown("**Настройки рейсов/кэш/гит**")
+        threshold_km = st.number_input(
+            "Макс. отклонение адреса от графика рейса (по дороге), км",
+            min_value=1.0, max_value=50.0, step=0.5, value=10.0, format="%.2f"
+        )
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            build_routes = st.form_submit_button("Собрать routes.json из TXT")
+        with col_b:
+            push_now = st.form_submit_button("Пуш в GitHub (cache/routes)")
+        with col_c:
+            clear_choice = st.form_submit_button("Сбросить выбор «по рейсу»")
+        if clear_choice:
+            st.session_state["route_confirmed_key"] = ""
+            st.session_state["route_user_wants"] = False
     else:
-        st.info("Введите пароль для доступа к расширенным настройкам.")
+        threshold_km = 10.0
+        build_routes = False
+        push_now = False
 
-# Настройки рейсов/кэша для админа
-if admin_mode:
-    with st.expander("Настройки рейсов/кэш/гит", expanded=False):
-        max_dev_km = st.number_input("Макс. отклонение адреса от графика рейса (по дороге), км",
-                                     min_value=2.0, max_value=80.0, value=float(st.session_state.get("max_dev_km", 10.0)),
-                                     step=1.0, format="%.2f")
-        st.session_state["max_dev_km"] = max_dev_km
-        st.caption("При отклонении ≤ этого порога предложим доставку «по рейсу» (тариф 15 руб./км).")
+    # Кнопка расчёта
+    calc = st.form_submit_button("Рассчитать")
 
-        if st.button("Очистить кэш маршрутов (routes_cache.json)"):
-            save_json(ROUTES_FILE, {"geocoded": {}, "routes": {}})
-            st.success("Кэш маршрутов очищен.")
+# Обработчики админ-кнопок вне формы (чтобы не мешать основному расчёту)
+routes_data = load_or_build_routes()
+if build_routes:
+    if os.path.exists(ROUTES_TXT):
+        try:
+            # читаем TXT и пересобираем
+            content = None
+            for enc in ("utf-8", "utf-8-sig", "cp1251", "utf-16", "utf-16le", "utf-16be"):
+                try:
+                    with open(ROUTES_TXT, "r", encoding=enc) as f:
+                        content = f.read()
+                    break
+                except Exception:
+                    continue
+            if not content:
+                st.error("Не удалось прочитать файл 'Точки выхода и рейсы.txt'. Проверьте кодировку/наличие.")
+            else:
+                new_routes = parse_routes_txt_to_json(content)
+                save_json(ROUTES_JSON, new_routes)
+                routes_data = new_routes
+                st.success(f"routes.json пересобран. Маршрутов: {len(routes_data.get('routes', []))}")
+                if AUTO_GIT_PUSH:
+                    st.info(git_sync([ROUTES_JSON], "Rebuild routes.json (manual)"))
+        except Exception as e:
+            st.error(f"Ошибка сборки routes.json: {e}")
+    else:
+        st.error("Файл 'Точки выхода и рейсы.txt' отсутствует в репозитории.")
 
-        if st.button("Обновить полигон границ Твери (boundary_cache.json)"):
-            try:
-                if os.path.exists(BOUNDARY_FILE):
-                    os.remove(BOUNDARY_FILE)
-                _ = get_tver_boundary_polygon()
-                st.success("Полигон границ Твери обновлён.")
-            except Exception as e:
-                st.error(f"Ошибка: {e}")
+if push_now:
+    files = []
+    if os.path.exists(CACHE_PATH):
+        files.append(CACHE_PATH)
+    if os.path.exists(ROUTES_JSON):
+        files.append(ROUTES_JSON)
+    if files:
+        st.info(git_sync(files, "Manual push cache/routes"))
+    else:
+        st.warning("Нет файлов для пуша.")
 
-        if st.button("Сделать git push кэша"):
-            res = git_autopush_cache(admin_mode=True)
-            st.write("Git push:", res)
-
-# Основной ввод
-cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
-addr_default = st.session_state.get("last_addr", DEFAULT_PREFIX)
-address = st.text_input("Введите адрес доставки", value=addr_default, key="addr_input")
-
-# Основной выбор даты (streamlit виджет)
-date_default = st.session_state.get("last_date", dt.date.today())
-date_obj = st.date_input("Выберите дату доставки", value=date_default, format="DD.MM.YYYY", key="date_input")
-
-# Русифицированный календарь (вспомогательный — синхронизирует дату выше)
-st.markdown("#### Дата доставки")
-st.components.v1.html(
-    f"""
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ru.js"></script>
-    <input id="ru_date" style="font-size:16px;padding:6px 10px;border:1px solid #ddd;border-radius:6px;width:180px;" placeholder="выберите дату" />
-    <script>
-      const dflt = "{date_obj.strftime('%d.%m.%Y')}";
-      const input = document.getElementById("ru_date");
-      window.flatpickr.localize(window.flatpickr.l10ns.ru);
-      const fp = window.flatpickr(input, {{
-          dateFormat: "d.m.Y",
-          defaultDate: dflt,
-          locale: "ru",
-          weekNumbers: false
-      }});
-      // отправляем выбранную дату обратно через hash (Streamlit перезагрузит страницу)
-      input.addEventListener('change', () => {{
-          const v = input.value; // dd.mm.yyyy
-          if (v) {{
-            const url = new URL(window.location.href);
-            url.searchParams.set("ruDate", v);
-            window.location.href = url.toString();
-          }}
-      }});
-    </script>
-    """,
-    height=80
-)
-
-# Считываем дату из query string (если кликнули в рус. календаре)
-qs = st.query_params
-if "ruDate" in qs:
-    try:
-        d_ru = qs["ruDate"]
-        dd, mm, yy = d_ru.split(".")
-        new_date = dt.date(int(yy), int(mm), int(dd))
-        # синхронизируем основной виджет
-        if new_date != date_obj:
-            date_obj = new_date
-            st.session_state["date_input"] = new_date
-    except Exception:
-        pass
-
-# Сброс «по рейсу» при смене адреса/даты
-prev_key = st.session_state.get("prev_hash", "")
-cur_key = hashlib.md5(f"{address}|{date_obj.isoformat()}".encode("utf-8")).hexdigest()
-if cur_key != prev_key:
-    st.session_state["use_route_tariff_confirmed"] = False
-    st.session_state["show_route_offer"] = False
-    st.session_state["prev_hash"] = cur_key
-
-# Кнопка расчёта
-calc = st.button("Рассчитать", type="primary")
-
-# ================== ОСНОВНАЯ ЛОГИКА РАСЧЁТА ==================
+# Основной расчёт
 if calc:
-    ensure_cache_files()
-    route_offer_shown = False
+    # Сброс «залипания» флага 15 руб. при смене адреса/даты:
+    cur_key = key_for_inputs(addr, d)
+    if st.session_state.get("route_confirmed_key", "") != cur_key:
+        st.session_state["route_user_wants"] = False
+        st.session_state["route_confirmed_key"] = cur_key
 
-    # Нормализация адреса: при необходимости добавим префикс
-    addr_clean = address.strip()
-    if not addr_clean:
-        st.error("Введите адрес.")
-        st.stop()
+    with st.spinner("Считаем..."):
+        distance_table = load_distance_table()
+        cache = load_cache()
 
-    if not addr_clean.startswith(DEFAULT_PREFIX):
-        # не навязываем пользователю, но для геокода используем полный, а в поле оставим как есть
-        geo_query = DEFAULT_PREFIX + addr_clean
-    else:
-        geo_query = addr_clean
+        try:
+            # Сначала считаем «без маршрута», чтобы понять возможен ли маршрут:
+            prelim = calc_cost_for_address(
+                addr, size, d, routes_data, threshold_km, distance_table, cache,
+                use_route_tariff=False  # на первом проходе всегда 32, просто чтобы вычислить route_possible
+            )
+            route_possible = prelim["route_possible"]
+            route_name = prelim["route_name"]
 
-    # Геокод адреса
-    with st.spinner("Поиск координат адреса..."):
-        g = geocode_nominatim(geo_query)
-    if not g:
-        st.error("Не удалось геокодировать адрес. Попробуйте уточнить.")
-        st.stop()
-    lat, lon, disp = g
-
-    # Проверим «в пределах Твери»
-    inside_tver = False
-    with st.spinner("Проверка границ города..."):
-        inside_tver = is_inside_tver(lat, lon)
-
-    # Находим ближайшую точку выхода
-    ex_pt, dist_to_exit_direct = nearest_exit_point(lat, lon)  # по прямой
-    ex_lon, ex_lat = ex_pt
-
-    # Достаём расстояние туда-обратно (км) — приоритет: таблица -> кэш -> ORS
-    src = None
-    cache = load_json(CACHE_FILE, default={})
-    np_name = disp.split(",")[0].strip()  # извлечём первое имя (как раньше)
-    np_norm = normalize_np_name(np_name)
-
-    # 1) Таблица
-    if np_name in DISTANCES_TABLE:
-        dist_km = float(DISTANCES_TABLE[np_name]["distance"])
-        src = "таблица"
-    # 2) Кэш
-    elif np_name in cache:
-        dist_km = float(cache[np_name]["distance"])
-        src = "кэш"
-        # подкорректируем ближайший выход (если сохранён)
-        ex_info = cache[np_name].get("exit_point")
-        if ex_info and isinstance(ex_info, (list, tuple)) and len(ex_info) == 2:
-            ex_lon, ex_lat = ex_info[0], ex_info[1]
-    else:
-        # 3) ORS: от ближайшей точки выхода до адреса, умножаем на 2
-        if not ORS_API_KEY:
-            st.error("ORS_API_KEY не настроен в переменных окружения. Нельзя посчитать расстояние по дорогам.")
-            st.stop()
-        with st.spinner("Расчёт расстояния по дорогам (ORS)..."):
-            oneway = ors_route_distance_km(ex_lat, ex_lon, lat, lon)
-        if oneway is None:
-            st.error("Не удалось получить расстояние от ORS.")
-            st.stop()
-        dist_km = round(oneway * 2.0, 3)
-        src = "ors"
-        # Сохраним в кэш
-        cache[np_name] = {"distance": dist_km, "exit_point": [ex_lon, ex_lat]}
-        save_json(CACHE_FILE, cache)
-        if admin_mode:
-            st.caption("Кэш обновлён, попытка git push…")
-            res = git_autopush_cache(admin_mode=True)
-            st.caption("Git push: " + res)
-
-    # Если внутри Твери — километраж не берём
-    if inside_tver:
-        total = BASE_PRICES[cargo_size]
-        st.subheader(f"Стоимость доставки: {total} руб.")
-        st.write("")
-        st.write(f"**Дата:** {date_obj.strftime('%d.%m.%Y')} ({['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'][date_obj.weekday()]})")
-        st.info("В пределах адм. границ Твери — доплата за километраж не начисляется.")
-        st.write(f"**Координаты:** lat={lat:.6f}, lon={lon:.6f}")
-        st.write(f"**Ближайшая точка выхода:** ({ex_lon:.6f}, {ex_lat:.6f})")
-        st.write(f"**Расстояние до выхода (по прямой):** {dist_to_exit_direct:.2f} км")
-        st.write(f"**Извлечённый населённый пункт:** {np_name}")
-        st.stop()
-
-    # Вне Твери — проверяем «по рейсу»
-    weekday = date_obj.weekday()
-    max_dev_km = float(st.session_state.get("max_dev_km", 10.0))
-
-    # Ищем отклонение по дороге до узлов рейсов на этот день
-    dev_km, route_code = road_distance_to_routes(lat, lon, weekday, admin_mode=admin_mode)
-
-    offer_possible = (dev_km is not None) and (dev_km <= max_dev_km) and (route_code is not None)
-    if offer_possible:
-        # показываем предложение
-        st.session_state["show_route_offer"] = True
-        st.session_state["route_code_found"] = route_code
-    else:
-        st.session_state["show_route_offer"] = False
-        st.session_state["route_code_found"] = None
-        st.session_state["use_route_tariff_confirmed"] = False
-
-    # Подсказка по рейсу
-    if st.session_state.get("show_route_offer", False):
-        with st.expander("Доставка по рейсу вместе с оптовыми заказами", expanded=True):
-            st.write(f"Маршрут дня: **{st.session_state.get('route_code_found')}**")
-            st.write(f"Отклонение по дороге до маршрута: **{dev_km:.2f} км** (порог: {max_dev_km:.2f} км)")
-            if not st.session_state.get("use_route_tariff_confirmed", False):
-                agree = st.selectbox(
-                    "Вы уверены, что данный заказ можно доставить по рейсу вместе с оптовыми заказами?",
-                    ["Нет", "Да"]
+            # Если по графику есть попадание в рейс — показываем опцию с подтверждением
+            use_route_tariff = False
+            if route_possible:
+                st.info(
+                    f"Обнаружено совпадение с рейсом **{route_name}** ({RU_WEEKDAYS[d.weekday()]}) — "
+                    "вы можете доставить вместе с оптовыми заказами по тарифу 15 руб./км."
                 )
-                if agree == "Да":
-                    st.session_state["use_route_tariff_confirmed"] = True
+                # Кнопка подтверждения (двухшаговая)
+                c1, c2 = st.columns(2)
+                with c1:
+                    yes = st.button("Да, применить тариф 15 руб./км")
+                with c2:
+                    no = st.button("Нет, считать по обычному тарифу")
 
-    # Выбор тарифа
-    use_route_tariff = bool(st.session_state.get("use_route_tariff_confirmed", False))
-    tariff = TARIFF_ROUTE if use_route_tariff else TARIFF_DEFAULT
+                if yes:
+                    st.session_state["route_user_wants"] = True
+                if no:
+                    st.session_state["route_user_wants"] = False
 
-    # Итоговая стоимость
-    base = BASE_PRICES[cargo_size]
-    extra = round(dist_km * tariff, 2)
-    total = math.ceil(base + extra)
+                use_route_tariff = bool(st.session_state["route_user_wants"])
 
-    st.subheader(f"Стоимость доставки: {total} руб.")
-    st.write("")
-    st.write(f"**Дата:** {date_obj.strftime('%d.%m.%Y')} ({['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'][weekday]})")
-    st.write(f"**Километраж:** {dist_km:.2f} км")
-    st.write(f"**Тариф:** {int(tariff)} руб./км")
-    st.write(f"**Рейс:** {'Да (' + st.session_state.get('route_code_found','') + ')' if use_route_tariff else 'Нет'}")
+            # Повторный расчёт с учётом выбранного тарифа
+            result = calc_cost_for_address(
+                addr, size, d, routes_data, threshold_km, distance_table, cache,
+                use_route_tariff=use_route_tariff
+            )
 
-    st.write("")
-    st.write(f"**Координаты:** lat={lat:.6f}, lon={lon:.6f}")
-    st.write(f"**Ближайшая точка выхода:** ({ex_lon:.6f}, {ex_lat:.6f})")
-    st.write(f"**Расстояние до выхода (по прямой):** {dist_to_exit_direct:.2f} км")
-    st.write(f"**Извлечённый населённый пункт:** {np_name}")
-    st.write(f"**Источник расстояния:** {src}")
+            # Автопуш кэша (если включён)
+            if AUTO_GIT_PUSH:
+                if os.path.exists(CACHE_PATH):
+                    git_sync([CACHE_PATH], "Update cache.json (auto after calc)")
 
-    # Сохраняем последние значения для предзаполнения
-    st.session_state["last_addr"] = address
-    st.session_state["last_date"] = date_obj
+        except RuntimeError as e:
+            st.error(str(e))
+            result = None
+        except requests.exceptions.JSONDecodeError:
+            st.error("Ошибка ответа геокодера. Попробуйте уточнить адрес.")
+            result = None
+        except Exception as e:
+            st.error(f"Не удалось выполнить расчёт: {e}")
+            result = None
+
+    # Вывод результата
+    st.subheader("Результат")
+    if result and result.get("ok"):
+        st.markdown(f"**Стоимость доставки:** {result['total']:.2f} руб.\n")
+        st.write(f"**Дата:** {d.strftime('%d.%m.%Y')} ({RU_WEEKDAYS[d.weekday()]})")
+
+        if result["within_tver"]:
+            st.info("**В пределах адм. границ Твери — доплата за километраж не начисляется.**")
+        else:
+            st.write(f"**Километраж (туда-обратно):** {result['km_roundtrip']:.2f} км")
+            st.write(f"**Тариф:** {int(result['tariff_per_km'])} руб./км")
+            st.write(f"**Рейс:** {'Да (' + result['route_name'] + ')' if (result['route_name'] and st.session_state.get('route_user_wants')) else ('Есть совпадение' if result['route_possible'] else 'Нет')}")
+            st.write(f"**Координаты:** lat={result['lat']:.6f}, lon={result['lon']:.6f}")
+
+            if result.get("exit_point"):
+                ep = result["exit_point"]
+                st.write(f"**Ближайшая точка выхода:** ({ep[0]:.6f}, {ep[1]:.6f})")
+                st.write(f"**Расстояние до выхода (по прямой):** {result['exit_point_km']:.2f} км")
+
+            st.write(f"**Источник расстояния:** {result['km_source']}")
+
+        st.write(f"**Извлечённый населённый пункт:** {result['place'] or '—'}")
+
+    else:
+        st.warning("Рассчёт не выполнен.")
+
+# Пояснение логики (сворачиваемое)
+with st.expander("О логике определения «по рейсу»", expanded=False):
+    st.markdown("""
+- Берём выбранный день недели и подгружаем **routes.json**.
+- Для каждого рейса этого дня ищем ближайшую к адресу точку маршрута (из списка точек с шагом ~10–15 км).
+- Считаем расстояние **по дорогам (ORS)** от адреса до этой ближайшей точки.
+- Если расстояние ≤ настраиваемого **порога** (по умолчанию 10 км), считаем что адрес находится «по пути» рейса.
+- Тогда показываем опцию «Доставка по рейсу вместе с оптовыми заказами» с подтверждением.
+- При подтверждении тариф меняется на **15 руб./км**, иначе остаётся **32 руб./км**.
+- Флаг 15 руб./км сбрасывается при изменении адреса или даты.
+- Километраж для тарифа — всегда от **ближайшей точки выхода** из Твери до адреса и обратно, **по дорогам (ORS)**,
+  с кэшированием. В пределах адм. границ Твери — километраж 0.
+""")
