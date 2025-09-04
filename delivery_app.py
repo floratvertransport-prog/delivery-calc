@@ -6,26 +6,15 @@ import asyncio
 import aiohttp
 import json
 import subprocess
-from datetime import date, datetime
+from datetime import date
 
-# ====== НАСТРОЙКИ И ИНИЦИАЛИЗАЦИЯ ======
-
-# Локализация (fallback, если streamlit-i18n не установлен)
-try:
-    from streamlit_i18n import init, _
-    init("ru")
-except ImportError:
-    def _(text): return text
-
-# Вкладка
+# ====== НАСТРОЙКИ ======
 st.set_page_config(page_title="Калькулятор доставки (розница)", page_icon="favicon.png")
 
-# Центрирование логотипа
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     st.image("logo.png", width=533)
 
-# Базовые тарифы
 cargo_prices = {
     "маленький": 500,
     "средний": 800,
@@ -33,21 +22,19 @@ cargo_prices = {
 }
 
 # ====== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ======
-
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return R * c
+    return R * c if (c := 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))) else 0
 
 async def get_server_ip():
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get('https://api.ipify.org?format=json', timeout=5) as response:
-                if response.status == 200:
-                    return (await response.json()).get('ip', 'Неизвестно')
+            async with session.get("https://api.ipify.org?format=json", timeout=5) as resp:
+                if resp.status == 200:
+                    return (await resp.json()).get("ip", "Неизвестно")
     except:
         return "Ошибка IP"
     return "Не удалось получить IP"
@@ -65,7 +52,6 @@ def save_cache(cache):
     try:
         with open("cache.json", "w", encoding="utf-8") as f:
             json.dump(cache, f, ensure_ascii=False, indent=2)
-
         # GitHub sync
         if not os.path.exists(".git"):
             subprocess.run(["git", "init"], check=True)
@@ -81,7 +67,6 @@ def save_cache(cache):
     except Exception as e:
         st.warning(f"Ошибка GitHub sync: {e}")
 
-# Геокодирование (Яндекс)
 def geocode_address(address, api_key):
     url = f"https://geocode-maps.yandex.ru/1.x/?apikey={api_key}&geocode={address}&format=json"
     resp = requests.get(url)
@@ -94,7 +79,6 @@ def geocode_address(address, api_key):
     except:
         raise ValueError("Адрес не найден")
 
-# ORS расстояние
 async def get_road_distance_ors(lat1, lon1, lat2, lon2, api_key):
     url = "https://api.openrouteservice.org/v2/directions/driving-car"
     headers = {"Authorization": api_key, "Content-Type": "application/json"}
@@ -105,9 +89,8 @@ async def get_road_distance_ors(lat1, lon1, lat2, lon2, api_key):
                 data = await r.json()
                 return data["routes"][0]["summary"]["distance"]
             else:
-                return haversine(lat1, lon1, lat2, lon2) * 1.3  # fallback
+                return haversine(lat1, lon1, lat2, lon2) * 1.3
 
-# Округление
 def round_cost(cost):
     rem = cost % 100
     return (cost // 100) * 100 if rem <= 20 else ((cost // 100) + 1) * 100
@@ -130,19 +113,20 @@ with st.form("delivery_form"):
     cargo_size = st.selectbox("Размер груза", list(cargo_prices.keys()))
     address = st.text_input("Введите адрес доставки", value="Тверская область, ")
     delivery_date = st.date_input("Дата доставки", value=date.today(), format="DD.MM.YYYY")
-    admin_password = st.text_input("Админ пароль", type="password")
-
     submit = st.form_submit_button("Рассчитать")
 
+# ====== СКРЫТЫЙ АДМИН-РЕЖИМ ======
+admin_password = st.sidebar.text_input("Админ пароль", type="password")
+admin_mode = admin_password == "admin123"
+
+# ====== ЛОГИКА РАСЧЕТА ======
 if submit and address:
     try:
         lat, lon = geocode_address(address, api_key)
 
-        # --- Определяем тариф ---
-        weekday = delivery_date.weekday()  # 0=Пн
-        use_route = False
+        weekday = delivery_date.weekday()
         matched_route = None
-        deviation_limit_km = 10  # можно сделать настраиваемым в админке
+        deviation_limit_km = 10
 
         for r in routes:
             if weekday not in r["days"]:
@@ -150,13 +134,23 @@ if submit and address:
             for stop in r["stops"]:
                 dist = haversine(lat, lon, stop["lat"], stop["lon"])
                 if dist <= deviation_limit_km:
-                    use_route = True
                     matched_route = r["name"]
                     break
+            if matched_route:
+                break
+
+        use_route = False
+        if matched_route:
+            confirm = st.checkbox("Доставка по рейсу вместе с оптовыми заказами")
+            if confirm:
+                if st.radio(
+                    "Вы уверены, что данный заказ можно доставить по рейсу вместе с оптовыми заказами?",
+                    ["Нет", "Да"], index=0
+                ) == "Да":
+                    use_route = True
 
         rate_per_km = 15 if use_route else 32
 
-        # --- Расстояние от ближайшей точки выхода ---
         min_exit = None
         min_dist = float("inf")
         for r in routes:
@@ -179,13 +173,12 @@ if submit and address:
         st.write(f"Ближайшая точка выхода: {min_exit}")
         st.write(f"Расстояние до выхода: {min_dist:.2f} км (по прямой)")
 
-        # Обновляем кэш
         cache = load_cache()
         cache[address] = {"distance": total_dist, "exit_point": min_exit}
         save_cache(cache)
 
-        # Админ-режим
-        if admin_password == "admin123":
+        # Админ-панель (только если пароль верный)
+        if admin_mode:
             st.subheader("Админ режим активирован")
             st.write("Текущий кэш:", cache)
             st.write("IP сервера:", asyncio.run(get_server_ip()))
