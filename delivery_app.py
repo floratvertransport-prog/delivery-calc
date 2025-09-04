@@ -17,6 +17,20 @@ col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     st.image("logo.png", width=533)
 
+# Функция Haversine
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    lat1_rad = math.radians(lat1)
+    lon1_rad = math.radians(lon1)
+    lat2_rad = math.radians(lat2)
+    lon2_rad = math.radians(lon2)
+    dlat = lat2_rad - lat1_rad
+    dlon = lon2_rad - lon1_rad
+    a = math.sin(dlat / 2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    distance = R * c
+    return distance
+
 # Загрузка routes.json
 def load_routes():
     cache_file = 'routes.json'
@@ -33,23 +47,7 @@ def load_routes():
     return {}
 
 # Инициализация данных
-routes_data = load_routes()
-cargo_prices = {"маленький": 300, "средний": 500, "большой": 800}
-distance_table = {}  # Можно расширить, если есть данные
-
-# Функция Haversine
-def haversine(lat1, lon1, lat2, lon2):
-    R = 6371.0
-    lat1_rad = math.radians(lat1)
-    lon1_rad = math.radians(lon1)
-    lat2_rad = math.radians(lat2)
-    lon2_rad = math.radians(lon2)
-    dlat = lat2_rad - lat1_rad
-    dlon = lon2_rad - lon1_rad
-    a = math.sin(dlat / 2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    distance = R * c
-    return distance
+load_routes()
 
 # Функции для кэша
 def load_cache():
@@ -359,21 +357,26 @@ else:
                 locality = extract_locality(address)
                 use_route_rate = False
                 if check_route_match(locality, delivery_date):
-                    if 'use_route' not in st.session_state:
-                        st.session_state.use_route = False
+                    st.write("👉 Вы можете доставить этот заказ вместе с оптовыми клиентами")
                     st.write("Доставка по рейсу вместе с оптовыми заказами")
-                    if st.checkbox("Использовать доставку по рейсу", value=st.session_state.use_route):
+                    use_route = st.checkbox("Использовать доставку по рейсу")
+                    if use_route:
                         if not st.session_state.get('route_confirmed', False):
                             if st.button("Подтвердить использование рейса"):
                                 confirm = st.radio("Вы уверены, что данный заказ можно доставить по рейсу вместе с оптовыми заказами?", ("Нет", "Да"))
                                 if confirm == "Да":
-                                    st.session_state.use_route = True
                                     st.session_state.route_confirmed = True
-                                    st.experimental_rerun()
+                                    use_route_rate = True
+                                    # Не используйте rerun здесь, чтобы избежать сброса
+                                else:
+                                    st.session_state.route_confirmed = False
+                                    use_route_rate = False
                         else:
                             use_route_rate = True
                     else:
-                        st.session_state.route_confirmed = False
+                        use_route_rate = False
+                        if 'route_confirmed' in st.session_state:
+                            del st.session_state.route_confirmed
                 else:
                     if 'use_route' in st.session_state:
                         del st.session_state.use_route
