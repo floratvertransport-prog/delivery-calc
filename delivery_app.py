@@ -17,6 +17,26 @@ col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     st.image("logo.png", width=533)
 
+# Загрузка routes.json
+def load_routes():
+    cache_file = 'routes.json'
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                globals()['exit_points'] = data.get('exit_points', [])
+                globals()['route_groups'] = data.get('route_groups', {})
+                return data
+        except Exception as e:
+            st.warning(f"Ошибка при загрузке routes.json: {e}")
+            return {}
+    return {}
+
+# Инициализация данных
+routes_data = load_routes()
+cargo_prices = {"маленький": 300, "средний": 500, "большой": 800}
+distance_table = {}  # Можно расширить, если есть данные
+
 # Функция Haversine
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
@@ -30,18 +50,6 @@ def haversine(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     distance = R * c
     return distance
-
-# Загрузка routes.json
-def load_routes():
-    cache_file = 'routes.json'
-    if os.path.exists(cache_file):
-        try:
-            with open(cache_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            st.warning(f"Ошибка при загрузке routes.json: {e}")
-            return {}
-    return {}
 
 # Функции для кэша
 def load_cache():
