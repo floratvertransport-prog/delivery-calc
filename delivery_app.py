@@ -18,7 +18,7 @@ st.set_page_config(
     layout="centered",
 )
 
-st.image("logo.png", use_container_width=True)
+st.image("logo.png", width=300)
 st.title("Калькулятор стоимости доставки по Твери и области для розничных клиентов")
 
 # --- Загрузка кэша ---
@@ -68,28 +68,47 @@ def push_to_git():
     except subprocess.CalledProcessError:
         return "Git push: Failed"
 
-def is_on_route(lat, lon, day_of_week):
-    # Проверка, попадает ли адрес в маршрут в заданный день
+def is_on_route(lat, lon, weekday):
+    """Проверяем, входит ли точка в маршрут рейса в выбранный день недели"""
     for route in routes:
-        if day_of_week not in route["days"]:
+        if weekday not in route["days"]:
             continue
         for point in route["points"]:
             dist = haversine(lat, lon, point[1], point[0])
-            if dist <= 10:  # до 10 км по прямой (можно заменить на API дорог)
+            if dist <= 10:  # до 10 км от маршрута
                 return route["name"]
     return None
 
 # --- Интерфейс ---
-address = st.text_input("Введите адрес доставки", value="Тверская область,\u00A0")
+address = st.text_input("Введите адрес доставки", value="Тверская область, ")
 
-cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
-date = st.date_input("Выберите дату доставки", datetime.now()).strftime("%d.%m.%Y")
-
-# --- Админ-режим (в боковой панели) ---
+# Проверяем режим админа
 admin_mode = False
-with st.sidebar:
-    st.subheader("Админ режим")
-    admin_password = st.text_input("Пароль", type="password")
+show_admin = False
+
+if address.strip().lower() == "/admin":
+    show_admin = True
+    address = ""  # очищаем адрес, чтобы не ломался геокодер
+
+# Проверка параметра URL (?admin=1)
+query_params = st.query_params
+if "admin" in query_params and query_params["admin"] == "1":
+    show_admin = True
+
+# Ввод размера и даты
+cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
+date_obj = st.date_input("Выберите дату доставки", datetime.now())
+date = date_obj.strftime("%Y/%m/%d")
+
+# Определяем день недели (0=понедельник ... 6=воскресенье)
+weekday = date_obj.weekday()
+weekday_names = [
+    "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"
+]
+
+# --- Админ-панель ---
+if show_admin:
+    admin_password = st.text_input("Введите пароль для входа в админ-режим", type="password")
     if admin_password == ADMIN_PASSWORD:
         admin_mode = True
         st.success("Админ режим активирован")
@@ -99,36 +118,26 @@ with st.sidebar:
         )
     else:
         max_deviation = 10.0
+else:
+    max_deviation = 10.0
 
 # --- Расчёт ---
 if address.strip():
     lat, lon, display_name = geocode(address)
     if lat and lon:
-        # Определяем день недели
-        day_name = datetime.strptime(date, "%d.%m.%Y").strftime("%A")
-        day_name_ru = {
-            "Monday": "Понедельник",
-            "Tuesday": "Вторник",
-            "Wednesday": "Среда",
-            "Thursday": "Четверг",
-            "Friday": "Пятница",
-            "Saturday": "Суббота",
-            "Sunday": "Воскресенье",
-        }[day_name]
-
         # Проверка рейса
-        route_name = is_on_route(lat, lon, day_name)
+        route_name = is_on_route(lat, lon, weekday)
         use_route_tariff = False
         if route_name:
             if st.checkbox("Доставка по рейсу вместе с оптовыми заказами"):
-                confirm = st.radio("Вы уверены? Заказ точно подходит для рейсовой доставки (объём/время допускают совмещение)?", ["Нет", "Да"])
+                confirm = st.radio("Вы уверены?", ["Нет", "Да"])
                 if confirm == "Да":
                     use_route_tariff = True
 
         # Определяем тариф
         tariff = 15 if use_route_tariff else 32
 
-        # Километраж и цена
+        # Точки выхода
         exit_points = [
             (36.055364, 56.795587),
             (35.871802, 56.808677),
@@ -148,7 +157,7 @@ if address.strip():
             st.markdown(f"""
                 ### Результат
                 Стоимость доставки: {cost:.0f} руб.  
-                Дата: {date} ({day_name_ru})  
+                Дата: {date} ({weekday_names[weekday]})  
                 В пределах адм. границ Твери — доплата за километраж не начисляется.  
                 Координаты: lat={lat}, lon={lon}  
             """)
@@ -161,7 +170,7 @@ if address.strip():
                 ### Результат
                 Стоимость доставки: {cost:.1f} руб.  
 
-                Дата: {date} ({day_name_ru})  
+                Дата: {date} ({weekday_names[weekday]})  
                 Километраж: {distance:.2f} км  
                 Тариф: {tariff} руб./км  
                 Рейс: {route_name if route_name else "Нет"}  
