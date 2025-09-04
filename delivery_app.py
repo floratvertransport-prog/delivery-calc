@@ -32,6 +32,23 @@ def load_routes():
 routes = load_routes()
 
 # =========================
+# ORS: расчёт расстояния
+# =========================
+ORS_API_KEY = os.getenv("ORS_API_KEY")
+
+def get_distance(lat1, lon1, lat2, lon2):
+    url = "https://api.openrouteservice.org/v2/directions/driving-car"
+    headers = {"Authorization": ORS_API_KEY}
+    body = {"coordinates": [[lon1, lat1], [lon2, lat2]]}
+    resp = requests.post(url, json=body, headers=headers, timeout=30)
+    data = resp.json()
+    try:
+        meters = data["routes"][0]["summary"]["distance"]
+        return meters / 1000  # в километрах
+    except Exception:
+        return None
+
+# =========================
 # Геокодирование
 # =========================
 def geocode(address):
@@ -52,8 +69,8 @@ def is_on_route(lat, lon, weekday, max_deviation_km=10):
             continue
         for point in route["points"]:
             p_lon, p_lat = point
-            dist = ((lat - p_lat) ** 2 + (lon - p_lon) ** 2) ** 0.5 * 111  # упрощённое расстояние
-            if dist <= max_deviation_km:
+            dist = get_distance(lat, lon, p_lat, p_lon)
+            if dist is not None and dist <= max_deviation_km:
                 return route["name"]
     return None
 
@@ -71,11 +88,33 @@ if st.button("Рассчитать"):
         if not lat:
             st.error("Адрес не найден!")
         else:
-            weekday = delivery_date.weekday()  # 0 = Пн, 1 = Вт ...
-            day_name = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"][weekday]
+            weekday = delivery_date.weekday()  # 0 = Пн
+            day_name = ["Понедельник", "Вторник", "Среда",
+                        "Четверг", "Пятница", "Суббота", "Воскресенье"][weekday]
 
             # Проверка на рейс
             route_name = is_on_route(lat, lon, weekday)
+
+            # Определяем ближайшую точку выхода
+            exit_points = [
+                (36.055364, 56.795587),
+                (35.871802, 56.808677),
+                (35.804913, 56.831684),
+                (36.020937, 56.850973),
+                (35.797443, 56.882207),
+                (35.932805, 56.902966),
+                (35.783293, 56.844247)
+            ]
+            best_exit = None
+            best_dist = float("inf")
+            for lon_e, lat_e in exit_points:
+                d = get_distance(lat, lon, lat_e, lon_e)
+                if d is not None and d < best_dist:
+                    best_dist = d
+                    best_exit = (lon_e, lat_e)
+
+            # Итоговый километраж
+            distance = best_dist if best_dist != float("inf") else 0
 
             # Логика тарифа
             tariff = 32
@@ -87,8 +126,7 @@ if st.button("Рассчитать"):
                         tariff = 15
                         by_route = True
 
-            # Заглушка расчёта расстояния (ORS можно подключить отдельно)
-            distance = 91.32
+            # Стоимость
             base_price = 200
             cost = base_price + distance * tariff
 
@@ -99,8 +137,10 @@ if st.button("Рассчитать"):
             st.subheader("Результат")
             st.write(f"Стоимость доставки: {round(cost, 1)} ₽")
             st.write(f"Дата: {formatted_date} ({day_name})")
-            st.write(f"Километраж: {distance} км")
+            st.write(f"Километраж: {round(distance, 2)} км")
             st.write(f"Тариф: {tariff} ₽/км")
             st.write(f"Рейс: {route_name if route_name else 'Нет'}")
             st.write(f"Координаты: lat={lat}, lon={lon}")
+            st.write(f"Ближайшая точка выхода: {best_exit}")
+            st.write(f"Расстояние до выхода: {round(best_dist, 2)} км")
             st.write(f"Извлечённый адрес: {display_name}")
