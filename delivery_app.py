@@ -120,6 +120,10 @@ if st.button("Рассчитать"):
             tariff = 32
             by_route = False
             if route_name:
+                st.markdown(
+                    f"<p style='color: green; font-weight: bold;'>✅ Этот заказ можно доставить вместе с оптовыми клиентами (рейс {route_name})</p>",
+                    unsafe_allow_html=True
+                )
                 confirm = st.checkbox("Доставка по рейсу вместе с оптовыми заказами")
                 if confirm:
                     if st.radio("Вы уверены?", ["Нет", "Да"]) == "Да":
