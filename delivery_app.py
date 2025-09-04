@@ -1,241 +1,106 @@
-# delivery_app.py
-import os
-import json
-import math
-from datetime import datetime
-import subprocess
-
 import streamlit as st
 import requests
+import json
+import os
+import datetime
 
-# ---------- Константы / файлы ----------
-CACHE_FILE = "cache.json"
-ROUTES_FILE = "routes.json"
-ADMIN_PASSWORD = "admin123"  # поменяйте
-
-# ---------- Favicon до первого вызова Streamlit ----------
-page_icon = "favicon.png" if os.path.exists("favicon.png") else "🧭"
-
+# =========================
+# Настройки страницы
+# =========================
 st.set_page_config(
     page_title="Калькулятор доставки (розница)",
-    page_icon=page_icon,
+    page_icon="favicon.png",
     layout="centered"
 )
 
-# ---------- Шапка с логотипом по центру ----------
-with st.container():
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
-        if os.path.exists("logo.png"):
-            st.image("logo.png", width=300)
-        else:
-            st.markdown(
-                "<h1 style='text-align:center;margin:0;'>Калькулятор доставки</h1>",
-                unsafe_allow_html=True
-            )
-
+# Логотип и заголовок
+st.image("logo.png", use_container_width=False, width=200)
+st.markdown("<h2 style='text-align: center;'>Калькулятор доставки (розница)</h2>", unsafe_allow_html=True)
 st.title("Калькулятор стоимости доставки по Твери и области для розничных клиентов")
-st.caption("Как открыть админку: набери **/admin** в поле «Поиск адреса» или добавь к URL `?admin=1`. Затем введи пароль.")
 
-# ---------- Работа с кэшем ----------
-def load_cache():
-    try:
-        if os.path.exists(CACHE_FILE):
-            with open(CACHE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
-
-def save_cache(cache_obj: dict):
-    try:
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(cache_obj, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
-cache = load_cache()
-
-# ---------- Загрузка routes.json ----------
+# =========================
+# Загрузка маршрутов
+# =========================
+@st.cache_data
 def load_routes():
-    try:
-        with open(ROUTES_FILE, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-    except Exception as e:
-        st.error(f"Ошибка чтения {ROUTES_FILE}: {e}")
-        return []
-
-    routes_list = []
-    # если словарь → берём values()
-    iterable = raw.values() if isinstance(raw, dict) else raw
-
-    for r in iterable:
-        if not isinstance(r, dict):
-            continue
-        name = r.get("name", "Рейс")
-        days = [int(x) for x in r.get("days", []) if isinstance(x, int) or str(x).isdigit()]
-        points = []
-        for p in r.get("points", []):
-            try:
-                lon, lat = float(p[0]), float(p[1])
-                points.append([lon, lat])
-            except Exception:
-                continue
-        if points:
-            routes_list.append({"name": name, "days": days, "points": points})
-
-    return routes_list
+    with open("routes.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, dict):
+        return list(data.values())
+    return data
 
 routes = load_routes()
 
-# ---------- Гео и расчёты ----------
+# =========================
+# Геокодирование
+# =========================
 def geocode(address):
-    url = "https://nominatim.openstreetmap.org/search"
-    params = {"format": "json", "q": address, "countrycodes": "ru", "limit": 1}
-    try:
-        resp = requests.get(url, params=params, headers={"User-Agent": "DeliveryCalc/1.0"})
-        resp.raise_for_status()
-        data = resp.json()
-        if not data:
-            return None, None, None
-        return float(data[0]["lat"]), float(data[0]["lon"]), data[0]["display_name"]
-    except Exception:
+    url = f"https://nominatim.openstreetmap.org/search"
+    params = {"q": address, "format": "json", "limit": 1}
+    resp = requests.get(url, params=params, headers={"User-Agent": "Mozilla/5.0"})
+    data = resp.json()
+    if not data:
         return None, None, None
+    return float(data[0]["lat"]), float(data[0]["lon"]), data[0]["display_name"]
 
-def haversine(lat1, lon1, lat2, lon2):
-    R = 6371.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlmb = math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlmb/2)**2
-    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-def find_nearest_exit(lat, lon, exits):
-    nearest, min_dist = None, float("inf")
-    for ex in exits:
-        dist = haversine(lat, lon, ex[1], ex[0])
-        if dist < min_dist:
-            min_dist, nearest = dist, ex
-    return nearest, min_dist
-
-def is_on_route(lat, lon, weekday, max_km, routes_list):
-    for route in routes_list:
+# =========================
+# Проверка принадлежности к рейсу
+# =========================
+def is_on_route(lat, lon, weekday, max_deviation_km=10):
+    for route in routes:
         if weekday not in route["days"]:
             continue
-        for p in route["points"]:
-            dist = haversine(lat, lon, p[1], p[0])
-            if dist <= max_km:
+        for point in route["points"]:
+            p_lon, p_lat = point
+            dist = ((lat - p_lat) ** 2 + (lon - p_lon) ** 2) ** 0.5 * 111  # упрощённое расстояние
+            if dist <= max_deviation_km:
                 return route["name"]
     return None
 
-def push_to_git():
-    try:
-        subprocess.run(["git", "add", CACHE_FILE], check=True)
-        subprocess.run(["git", "commit", "-m", "update cache"], check=True)
-        subprocess.run(["git", "push", "origin", "main"], check=True)
-        return "Git push: Success"
-    except Exception as e:
-        return f"Git push: Failed ({e})"
-
-# ---------- UI ----------
-address = st.text_input("Поиск адреса", value="Тверская область, ")
-
-# Админка
-admin_requested = address.strip().lower() == "/admin"
-url_params = {}
-try:
-    url_params = st.query_params
-except Exception:
-    pass
-param_admin = str(url_params.get("admin", "0")) == "1"
-
-show_admin = admin_requested or param_admin
-admin_mode = False
-
-address_for_geocode = address if not admin_requested else ""
-
+# =========================
+# Интерфейс
+# =========================
+address = st.text_input("Введите адрес доставки", value="Тверская область, ")
 cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
+delivery_date = st.date_input("Выберите дату доставки", datetime.date.today())
 
-today = datetime.now().date()
-date_val = st.date_input("Выберите дату доставки", value=today)
-date_str = datetime.combine(date_val, datetime.min.time()).strftime("%d.%m.%Y")
-weekday = date_val.weekday()
-weekday_names = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"]
-
-max_deviation_km = 10.0
-if show_admin:
-    pwd = st.text_input("Пароль администратора", type="password")
-    if pwd == ADMIN_PASSWORD:
-        admin_mode = True
-        st.success("Админ-режим активирован")
-        max_deviation_km = st.number_input(
-            "Максимальное отклонение от маршрута (км)",
-            min_value=1.0, max_value=50.0, value=10.0
-        )
-    else:
-        st.info("Введите правильный пароль.")
-
-# ---------- Расчёт ----------
-if address_for_geocode.strip():
-    lat, lon, display_name = geocode(address_for_geocode)
-    if lat is not None and lon is not None:
-        route_name = is_on_route(lat, lon, weekday, max_deviation_km, routes)
-
-        use_route_tariff = False
-        if route_name:
-            if st.checkbox("Доставка по рейсу вместе с оптовыми заказами"):
-                confirm = st.radio("Подтвердите выбор", ["Нет", "Да"], horizontal=True)
-                use_route_tariff = (confirm == "Да")
-
-        tariff = 15 if use_route_tariff else 32
-
-        exit_points = [
-            (36.055364, 56.795587),
-            (35.871802, 56.808677),
-            (35.804913, 56.831684),
-            (36.020937, 56.850973),
-            (35.797443, 56.882207),
-            (35.932805, 56.902966),
-            (35.783293, 56.844247),
-        ]
-        nearest_exit, dist_exit = find_nearest_exit(lat, lon, exit_points)
-
-        in_tver = "Тверь" in (display_name or "")
-
-        if in_tver:
-            cost = 350
-            st.markdown(
-                f"### Результат\n"
-                f"**Стоимость доставки:** {cost:.0f} ₽  \n"
-                f"**Дата:** {date_str} ({weekday_names[weekday]})  \n"
-                f"В пределах адм. границ Твери — доплата не начисляется.  \n"
-                f"**Координаты:** lat={lat:.6f}, lon={lon:.6f}"
-            )
+# Кнопка расчёта
+if st.button("Рассчитать"):
+    if address.strip() and not address.strip().lower().startswith("/admin"):
+        lat, lon, display_name = geocode(address)
+        if not lat:
+            st.error("Адрес не найден!")
         else:
-            distance_km = 2 * dist_exit
-            base_price = 350 if cargo_size == "маленький" else 700 if cargo_size == "средний" else 1050
-            extra = distance_km * tariff
-            cost = base_price + extra
+            weekday = delivery_date.weekday()  # 0 = Пн, 1 = Вт ...
+            day_name = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"][weekday]
 
-            st.markdown(
-                f"### Результат\n"
-                f"**Стоимость доставки:** {cost:.1f} ₽  \n"
-                f"**Дата:** {date_str} ({weekday_names[weekday]})  \n"
-                f"**Километраж:** {distance_km:.2f} км  \n"
-                f"**Тариф:** {tariff} ₽/км  \n"
-                f"**Рейс:** {route_name if route_name else 'Нет'}  \n"
-                f"**Координаты:** lat={lat:.6f}, lon={lon:.6f}  \n"
-                f"**Ближайшая точка выхода:** {nearest_exit}  \n"
-                f"**Расстояние до выхода:** {dist_exit:.2f} км  \n"
-                f"**Извлечённый адрес:** {display_name}"
-            )
+            # Проверка на рейс
+            route_name = is_on_route(lat, lon, weekday)
 
-        cache[address_for_geocode] = {"nearest_exit": nearest_exit, "dist_to_exit": dist_exit}
-        save_cache(cache)
+            # Логика тарифа
+            tariff = 32
+            by_route = False
+            if route_name:
+                confirm = st.checkbox("Доставка по рейсу вместе с оптовыми заказами")
+                if confirm:
+                    if st.radio("Вы уверены?", ["Нет", "Да"]) == "Да":
+                        tariff = 15
+                        by_route = True
 
-        if admin_mode:
-            st.caption(push_to_git())
-    else:
-        st.error("Не удалось определить координаты адреса.")
-elif admin_requested:
-    st.info("Админ-режим активирован. Введите пароль выше.")
+            # Заглушка расчёта расстояния (ORS можно подключить отдельно)
+            distance = 91.32
+            base_price = 200
+            cost = base_price + distance * tariff
+
+            # Формат даты
+            formatted_date = delivery_date.strftime("%d.%m.%Y")
+
+            # Результат
+            st.subheader("Результат")
+            st.write(f"Стоимость доставки: {round(cost, 1)} ₽")
+            st.write(f"Дата: {formatted_date} ({day_name})")
+            st.write(f"Километраж: {distance} км")
+            st.write(f"Тариф: {tariff} ₽/км")
+            st.write(f"Рейс: {route_name if route_name else 'Нет'}")
+            st.write(f"Координаты: lat={lat}, lon={lon}")
+            st.write(f"Извлечённый адрес: {display_name}")
