@@ -17,20 +17,6 @@ col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     st.image("logo.png", width=533)
 
-# Функция Haversine
-def haversine(lat1, lon1, lat2, lon2):
-    R = 6371.0
-    lat1_rad = math.radians(lat1)
-    lon1_rad = math.radians(lon1)
-    lat2_rad = math.radians(lat2)
-    lon2_rad = math.radians(lon2)
-    dlat = lat2_rad - lat1_rad
-    dlon = lon2_rad - lon1_rad
-    a = math.sin(dlat / 2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    distance = R * c
-    return distance
-
 # Загрузка routes.json
 def load_routes():
     cache_file = 'routes.json'
@@ -48,6 +34,22 @@ def load_routes():
 
 # Инициализация данных
 load_routes()
+cargo_prices = {"маленький": 300, "средний": 500, "большой": 800}
+distance_table = {}  # Можно расширить, если есть данные
+
+# Функция Haversine
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    lat1_rad = math.radians(lat1)
+    lon1_rad = math.radians(lon1)
+    lat2_rad = math.radians(lat2)
+    lon2_rad = math.radians(lon2)
+    dlat = lat2_rad - lat1_rad
+    dlon = lon2_rad - lon1_rad
+    a = math.sin(dlat / 2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    distance = R * c
+    return distance
 
 # Функции для кэша
 def load_cache():
@@ -311,7 +313,7 @@ if not api_key:
 else:
     cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
     address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
-    delivery_date = st.date_input("Дата доставки", value=date(2025, 9, 1), format="DD.MM.YYYY")
+    delivery_date = st.date_input("Дата доставки", value=date(2025, 9, 5), format="DD.MM.YYYY")
     admin_password = st.text_input("Админ пароль для отладки (оставьте пустым для обычного режима)", type="password")
     if admin_password == "admin123":
         st.write("Точки выхода из Твери:")
@@ -359,29 +361,46 @@ else:
                 if check_route_match(locality, delivery_date):
                     st.write("👉 Вы можете доставить этот заказ вместе с оптовыми клиентами")
                     st.write("Доставка по рейсу вместе с оптовыми заказами")
-                    use_route = st.checkbox("Использовать доставку по рейсу")
-                    if use_route:
-                        if not st.session_state.get('route_confirmed', False):
-                            if st.button("Подтвердить использование рейса"):
-                                confirm = st.radio("Вы уверены, что данный заказ можно доставить по рейсу вместе с оптовыми заказами?", ("Нет", "Да"))
-                                if confirm == "Да":
-                                    st.session_state.route_confirmed = True
-                                    use_route_rate = True
-                                    # Не используйте rerun здесь, чтобы избежать сброса
-                                else:
-                                    st.session_state.route_confirmed = False
-                                    use_route_rate = False
-                        else:
-                            use_route_rate = True
+                    use_route = st.checkbox("Использовать доставку по рейсу", value=st.session_state.get('use_route', False))
+                    if use_route and not st.session_state.get('route_confirmed', False):
+                        confirm = st.radio("Вы уверены, что данный заказ можно доставить по рейсу вместе с оптовыми заказами?", ("Нет", "Да"), key="route_confirm")
+                        if st.button("Подтвердить использование рейса"):
+                            if confirm == "Да":
+                                st.session_state.route_confirmed = True
+                                st.session_state.use_route = True
+                                use_route_rate = True
+                            else:
+                                st.session_state.route_confirmed = False
+                                st.session_state.use_route = False
+                                use_route_rate = False
+                    elif use_route and st.session_state.get('route_confirmed', False):
+                        use_route_rate = True
                     else:
                         use_route_rate = False
                         if 'route_confirmed' in st.session_state:
                             del st.session_state.route_confirmed
+                        if 'use_route' in st.session_state:
+                            del st.session_state.use_route
                 else:
                     if 'use_route' in st.session_state:
                         del st.session_state.use_route
                     if 'route_confirmed' in st.session_state:
                         del st.session_state.route_confirmed
+
+                # Сброс состояния при изменении адреса или даты
+                if 'prev_address' not in st.session_state or st.session_state.prev_address != address:
+                    if 'use_route' in st.session_state:
+                        del st.session_state.use_route
+                    if 'route_confirmed' in st.session_state:
+                        del st.session_state.route_confirmed
+                    st.session_state.prev_address = address
+                if 'prev_date' not in st.session_state or st.session_state.prev_date != delivery_date:
+                    if 'use_route' in st.session_state:
+                        del st.session_state.use_route
+                    if 'route_confirmed' in st.session_state:
+                        del st.session_state.route_confirmed
+                    st.session_state.prev_date = delivery_date
+
                 result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key, delivery_date, use_route_rate))
                 cost, dist_to_exit, nearest_exit, locality, total_distance, source, rate_per_km = result
                 st.success(f"Стоимость доставки: {cost} руб.")
