@@ -311,49 +311,52 @@ routing_api_key = os.environ.get("ORS_API_KEY")
 if not api_key:
     st.error("Ошибка: API-ключ для геокодирования не настроен. Обратитесь к администратору.")
 else:
-    cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
-    address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
-    delivery_date = st.date_input("Дата доставки", value=date(2025, 9, 1), format="DD.MM.YYYY")
-    admin_password = st.text_input("Админ пароль для отладки (оставьте пустым для обычного режима)", type="password")
-    if admin_password == "admin123":
-        st.write("Точки выхода из Твери:")
-        for i, point in enumerate(exit_points, 1):
-            st.write(f"Точка {i}: {point}")
-        server_ip = asyncio.run(get_server_ip())
-        st.write(f"IP сервера Render: {server_ip}")
-        st.write(f"Версия Streamlit: {st.__version__}")
-        st.write(f"Версия aiohttp: {aiohttp.__version__}")
-        st.write(f"Проверка GIT_TOKEN: {check_git_token()}")
-        cache = load_cache()
-        st.write(f"Текущий кэш: {cache}")
-        if 'cache_before_save' in st.session_state:
-            st.write(f"Кэш перед сохранением: {st.session_state.cache_before_save}")
-        if 'cache_after_save' in st.session_state:
-            st.write(f"Кэш после сохранения: {st.session_state.cache_after_save}")
-        if 'save_cache_error' in st.session_state:
-            st.write(f"Ошибка сохранения кэша: {st.session_state.save_cache_error}")
-        if 'git_sync_status' in st.session_state:
-            st.write(f"Статус синхронизации с GitHub: {st.session_state.git_sync_status}")
-        if 'git_fetch_status' in st.session_state:
-            st.write(f"Статус git fetch: {st.session_state.git_fetch_status}")
-        if 'git_pull_status' in st.session_state:
-            st.write(f"Статус git pull: {st.session_state.git_pull_status}")
-        if 'git_remote_status' in st.session_state:
-            st.write(st.session_state.git_remote_status)
-        if 'git_branch_status' in st.session_state:
-            st.write(st.session_state.git_branch_status)
-        if 'git_status' in st.session_state:
-            st.write(st.session_state.git_status)
-        if not routing_api_key:
-            st.warning("ORS_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.3.")
-        else:
-            st.success("ORS_API_KEY настроен. Расстояние будет рассчитано по реальным дорогам.")
-        if cache:
-            st.write("Кэш расстояний:")
-            for locality, data in cache.items():
-                st.write(f"{locality}: {data['distance']} км (точка выхода: {data['exit_point']})")
-    if st.button("Рассчитать"):
-        if address:
+    with st.form(key="delivery_form"):
+        cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
+        address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
+        delivery_date = st.date_input("Дата доставки", value=date(2025, 9, 1), format="DD.MM.YYYY")
+        admin_password = st.text_input("Админ пароль для отладки (оставьте пустым для обычного режима)", type="password")
+        submit_button = st.form_submit_button(label="Рассчитать")
+
+        if admin_password == "admin123":
+            st.write("Точки выхода из Твери:")
+            for i, point in enumerate(exit_points, 1):
+                st.write(f"Точка {i}: {point}")
+            server_ip = asyncio.run(get_server_ip())
+            st.write(f"IP сервера Render: {server_ip}")
+            st.write(f"Версия Streamlit: {st.__version__}")
+            st.write(f"Версия aiohttp: {aiohttp.__version__}")
+            st.write(f"Проверка GIT_TOKEN: {check_git_token()}")
+            cache = load_cache()
+            st.write(f"Текущий кэш: {cache}")
+            if 'cache_before_save' in st.session_state:
+                st.write(f"Кэш перед сохранением: {st.session_state.cache_before_save}")
+            if 'cache_after_save' in st.session_state:
+                st.write(f"Кэш после сохранения: {st.session_state.cache_after_save}")
+            if 'save_cache_error' in st.session_state:
+                st.write(f"Ошибка сохранения кэша: {st.session_state.save_cache_error}")
+            if 'git_sync_status' in st.session_state:
+                st.write(f"Статус синхронизации с GitHub: {st.session_state.git_sync_status}")
+            if 'git_fetch_status' in st.session_state:
+                st.write(f"Статус git fetch: {st.session_state.git_fetch_status}")
+            if 'git_pull_status' in st.session_state:
+                st.write(f"Статус git pull: {st.session_state.git_pull_status}")
+            if 'git_remote_status' in st.session_state:
+                st.write(st.session_state.git_remote_status)
+            if 'git_branch_status' in st.session_state:
+                st.write(st.session_state.git_branch_status)
+            if 'git_status' in st.session_state:
+                st.write(st.session_state.git_status)
+            if not routing_api_key:
+                st.warning("ORS_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.3.")
+            else:
+                st.success("ORS_API_KEY настроен. Расстояние будет рассчитано по реальным дорогам.")
+            if cache:
+                st.write("Кэш расстояний:")
+                for locality, data in cache.items():
+                    st.write(f"{locality}: {data['distance']} км (точка выхода: {data['exit_point']})")
+
+        if submit_button and address:
             try:
                 dest_lat, dest_lon = geocode_address(address, api_key)
                 locality = extract_locality(address)
