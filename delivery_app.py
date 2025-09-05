@@ -365,13 +365,12 @@ else:
                     if use_route:
                         if not st.session_state.get('route_confirmed', False):
                             confirm = st.radio("Вы точно уверены, что возможна доставка вместе с оптовыми заказами? Время или объём позволяют осуществить доставку вместе с рейсом?", ("Нет", "Да"))
-                            if st.button("Подтвердить"):
-                                if confirm == "Да":
-                                    st.session_state.route_confirmed = True
-                                    use_route_rate = True
-                                else:
-                                    st.session_state.route_confirmed = False
-                                    use_route_rate = False
+                            if confirm == "Да":
+                                st.session_state.route_confirmed = True
+                                use_route_rate = True
+                            else:
+                                st.session_state.route_confirmed = False
+                                use_route_rate = False
                         else:
                             use_route_rate = True
                     else:
