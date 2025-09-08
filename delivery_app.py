@@ -218,24 +218,32 @@ async def get_road_distance_ors(start_lon, start_lat, end_lon, end_lat, api_key)
     except aiohttp.ClientError as e:
         raise ValueError(f"Ошибка соединения с ORS API: {str(e)}")
 
-# Поиск ближайшей точки выхода с учётом исключений
+# Поиск ближайшей точки выхода с точной привязкой по координатам
 def find_nearest_exit_point(dest_lat, dest_lon, locality, delivery_date):
     min_dist = float('inf')
     nearest_exit = None
-    # Приоритетная привязка к точке 8 для указанных населённых пунктов
-    if locality in no_route_localities_point_8:
-        nearest_exit = exit_points[7]  # Точка 8 (индекс 7)
-        min_dist = haversine(dest_lat, dest_lon, nearest_exit[1], nearest_exit[0])
-    # Приоритетная привязка к точке 7 для указанных населённых пунктов
-    elif locality in no_route_localities_point_7:
-        nearest_exit = exit_points[6]  # Точка 7 (индекс 6)
-        min_dist = haversine(dest_lat, dest_lon, nearest_exit[1], nearest_exit[0])
-    else:
-        for exit_point in exit_points:
-            dist = haversine(dest_lat, dest_lon, exit_point[1], exit_point[0])
-            if dist < min_dist:
-                min_dist = dist
-                nearest_exit = exit_point
+    tolerance = 0.01  # Допуск в градусах (около 1 км)
+
+    # Проверка координат для привязки к точке 8
+    for loc, (lat, lon) in no_route_localities_point_8.items():
+        if abs(dest_lat - lat) < tolerance and abs(dest_lon - lon) < tolerance:
+            nearest_exit = exit_points[7]  # Точка 8 (индекс 7)
+            min_dist = haversine(dest_lat, dest_lon, nearest_exit[1], nearest_exit[0])
+            return nearest_exit, min_dist
+
+    # Проверка координат для привязки к точке 7
+    for loc, (lat, lon) in no_route_localities_point_7.items():
+        if abs(dest_lat - lat) < tolerance and abs(dest_lon - lon) < tolerance:
+            nearest_exit = exit_points[6]  # Точка 7 (индекс 6)
+            min_dist = haversine(dest_lat, dest_lon, nearest_exit[1], nearest_exit[0])
+            return nearest_exit, min_dist
+
+    # Если нет точного соответствия, ищем ближайшую точку
+    for exit_point in exit_points:
+        dist = haversine(dest_lat, dest_lon, exit_point[1], exit_point[0])
+        if dist < min_dist:
+            min_dist = dist
+            nearest_exit = exit_point
     return nearest_exit, min_dist
 
 # Извлечение населённого пункта с точным соответствием
