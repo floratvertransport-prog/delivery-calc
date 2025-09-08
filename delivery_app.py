@@ -37,6 +37,15 @@ load_routes()
 cargo_prices = {"маленький": 350, "средний": 500, "большой": 800}
 distance_table = {}  # Можно расширить, если есть данные
 
+# Список населённых пунктов без рейсов, привязанных к точке 8
+no_route_localities = {
+    "деревня Аввакумово": (56.879706, 36.006304),
+    "деревня Аркатово": (56.890298, 36.029007),
+    "деревня Горютино": (56.891522, 36.058333),
+    "деревня Сапково": (56.887168, 36.066890),
+    "посёлок Сахарово": (56.897499, 36.049389)
+}
+
 # Функция Haversine
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
@@ -201,15 +210,20 @@ async def get_road_distance_ors(start_lon, start_lat, end_lon, end_lat, api_key)
     except aiohttp.ClientError as e:
         raise ValueError(f"Ошибка соединения с ORS API: {str(e)}")
 
-# Поиск ближайшей точки выхода
-def find_nearest_exit_point(dest_lat, dest_lon):
+# Поиск ближайшей точки выхода с учётом исключений
+def find_nearest_exit_point(dest_lat, dest_lon, locality, delivery_date):
     min_dist = float('inf')
     nearest_exit = None
-    for exit_point in exit_points:
-        dist = haversine(dest_lat, dest_lon, exit_point[1], exit_point[0])
-        if dist < min_dist:
-            min_dist = dist
-            nearest_exit = exit_point
+    # Если населённый пункт в списке без рейсов, используем точку 8
+    if locality in no_route_localities:
+        nearest_exit = exit_points[7]  # Точка 8 (индекс 7)
+        min_dist = haversine(dest_lat, dest_lon, nearest_exit[1], nearest_exit[0])
+    else:
+        for exit_point in exit_points:
+            dist = haversine(dest_lat, dest_lon, exit_point[1], exit_point[0])
+            if dist < min_dist:
+                min_dist = dist
+                nearest_exit = exit_point
     return nearest_exit, min_dist
 
 # Извлечение населённого пункта
@@ -235,6 +249,9 @@ def extract_locality(address):
 def check_route_match(locality, delivery_date):
     if not locality or not delivery_date:
         return False
+    # Исключение для населённых пунктов без рейсов
+    if locality in no_route_localities:
+        return False
     day_of_week = delivery_date.weekday()
     if str(day_of_week) not in route_groups:
         return False
@@ -257,9 +274,9 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
     if cargo_size not in cargo_prices:
         raise ValueError("Неверный размер груза. Доступны: маленький, средний, большой")
     base_cost = cargo_prices[cargo_size]
-    nearest_exit, dist_to_exit = find_nearest_exit_point(dest_lat, dest_lon)
     locality = extract_locality(address)
     st.session_state.locality = locality
+    nearest_exit, dist_to_exit = find_nearest_exit_point(dest_lat, dest_lon, locality, delivery_date)
     rate_per_km = 15 if use_route_rate else 32
     if locality and locality.lower() == 'тверь':
         total_distance = 0
@@ -314,7 +331,7 @@ else:
     with st.form(key="delivery_form"):
         cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
         address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
-        delivery_date = st.date_input("Дата доставки", value=date(2025, 9, 1), format="DD.MM.YYYY")
+        delivery_date = st.date_input("Дата доставки", value=date.today(), format="DD.MM.YYYY")
         admin_password = st.text_input("Админ пароль для отладки (оставьте пустым для обычного режима)", type="password")
         submit_button = st.form_submit_button(label="Рассчитать")
 
