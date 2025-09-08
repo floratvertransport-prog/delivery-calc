@@ -37,13 +37,21 @@ load_routes()
 cargo_prices = {"маленький": 350, "средний": 500, "большой": 800}
 distance_table = {}  # Можно расширить, если есть данные
 
-# Список населённых пунктов без рейсов, привязанных к точке 8
-no_route_localities = {
+# Словари населённых пунктов с привязкой к конкретным точкам выхода
+no_route_localities_point_8 = {
     "деревня Аввакумово": (56.879706, 36.006304),
     "деревня Аркатово": (56.890298, 36.029007),
     "деревня Горютино": (56.891522, 36.058333),
     "деревня Сапково": (56.887168, 36.066890),
     "посёлок Сахарово": (56.897499, 36.049389)
+}
+
+no_route_localities_point_7 = {
+    "деревня Рябеево": (56.835279, 35.716402),
+    "деревня Красново": (56.836976, 35.667727),
+    "деревня Мотавино": (56.833959, 35.651731),
+    "деревня Прудище": (56.828384, 35.627544),
+    "деревня Спичево": (56.823067, 35.612344)
 }
 
 # Функция Haversine
@@ -214,9 +222,13 @@ async def get_road_distance_ors(start_lon, start_lat, end_lon, end_lat, api_key)
 def find_nearest_exit_point(dest_lat, dest_lon, locality, delivery_date):
     min_dist = float('inf')
     nearest_exit = None
-    # Если населённый пункт в списке без рейсов, используем точку 8
-    if locality in no_route_localities:
+    # Приоритетная привязка к точке 8 для указанных населённых пунктов
+    if locality in no_route_localities_point_8:
         nearest_exit = exit_points[7]  # Точка 8 (индекс 7)
+        min_dist = haversine(dest_lat, dest_lon, nearest_exit[1], nearest_exit[0])
+    # Приоритетная привязка к точке 7 для указанных населённых пунктов
+    elif locality in no_route_localities_point_7:
+        nearest_exit = exit_points[6]  # Точка 7 (индекс 6)
         min_dist = haversine(dest_lat, dest_lon, nearest_exit[1], nearest_exit[0])
     else:
         for exit_point in exit_points:
@@ -226,8 +238,9 @@ def find_nearest_exit_point(dest_lat, dest_lon, locality, delivery_date):
                 nearest_exit = exit_point
     return nearest_exit, min_dist
 
-# Извлечение населённого пункта
+# Извлечение населённого пункта с точным соответствием
 def extract_locality(address):
+    known_localities = {**no_route_localities_point_8, **no_route_localities_point_7}
     if 'тверь' in address.lower():
         return 'Тверь'
     if 'завидово' in address.lower() and not 'новозавидовский' in address.lower():
@@ -235,7 +248,7 @@ def extract_locality(address):
     if 'новозавидовский' in address.lower():
         return 'посёлок городского типа Новозавидовский'
     cache = load_cache()
-    for locality in cache.keys():
+    for locality, (lat, lon) in known_localities.items():
         if locality.lower() in address.lower():
             return locality
     parts = address.split(',')
@@ -250,7 +263,7 @@ def check_route_match(locality, delivery_date):
     if not locality or not delivery_date:
         return False
     # Исключение для населённых пунктов без рейсов
-    if locality in no_route_localities:
+    if locality in no_route_localities_point_8 or locality in no_route_localities_point_7:
         return False
     day_of_week = delivery_date.weekday()
     if str(day_of_week) not in route_groups:
