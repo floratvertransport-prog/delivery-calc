@@ -38,7 +38,8 @@ def load_tver_boundary():
     if os.path.exists(cache_file):
         try:
             with open(cache_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                data = json.load(f)
+                return data
         except Exception as e:
             st.warning(f"Ошибка при загрузке tver_boundaries.geojson: {e}")
             return {}
@@ -46,7 +47,7 @@ def load_tver_boundary():
 
 # Проверка, находится ли точка внутри полигона (алгоритм ray casting)
 def point_in_polygon(point, polygon):
-    x, y = point
+    x, y = point  # Ожидаем (lon, lat)
     n = len(polygon)
     inside = False
     p1x, p1y = polygon[0]
@@ -65,7 +66,9 @@ def point_in_polygon(point, polygon):
 # Инициализация данных
 load_routes()
 tver_geojson = load_tver_boundary()
-tver_polygon = tver_geojson['features'][0]['geometry']['coordinates'][0] if tver_geojson else []
+tver_polygon = tver_geojson['features'][0]['geometry']['coordinates'][0] if tver_geojson and tver_geojson.get('features') else []
+if not tver_polygon:
+    st.warning("Границы Твери не загружены. Проверьте tver_boundaries.geojson.")
 cargo_prices = {"маленький": 350, "средний": 500, "большой": 800}
 distance_table = {}  # Можно расширить, если есть данные
 
@@ -331,10 +334,13 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
     st.session_state.locality = locality
     # Проверка, находится ли точка внутри границ Твери
     if point_in_polygon((dest_lon, dest_lat), tver_polygon):
+        st.write(f"DEBUG: Point ({dest_lon}, {dest_lat}) is inside Tver polygon.")
         locality = 'Тверь'
         total_distance = 0
         total_cost = base_cost
         return total_cost, 0, None, locality, total_distance, "город", 0
+    else:
+        st.write(f"DEBUG: Point ({dest_lon}, {dest_lat}) is outside Tver polygon.")
     nearest_exit, dist_to_exit = find_nearest_exit_point(dest_lat, dest_lon, locality, delivery_date)
     rate_per_km = 15 if use_route_rate else 32
     if locality and locality.lower() == 'тверь':
