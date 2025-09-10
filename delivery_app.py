@@ -32,8 +32,40 @@ def load_routes():
             return {}
     return {}
 
+# Загрузка границ Твери из GeoJSON
+def load_tver_boundary():
+    cache_file = 'tver_boundaries.geojson'
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            st.warning(f"Ошибка при загрузке tver_boundaries.geojson: {e}")
+            return {}
+    return {}
+
+# Проверка, находится ли точка внутри полигона (алгоритм ray casting)
+def point_in_polygon(point, polygon):
+    x, y = point
+    n = len(polygon)
+    inside = False
+    p1x, p1y = polygon[0]
+    for i in range(n + 1):
+        p2x, p2y = polygon[i % n]
+        if y > min(p1y, p2y):
+            if y <= max(p1y, p2y):
+                if x <= max(p1x, p2x):
+                    if p1y != p2y:
+                        xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                    if p1x == p2x or x <= xinters:
+                        inside = not inside
+        p1x, p1y = p2x, p2y
+    return inside
+
 # Инициализация данных
 load_routes()
+tver_geojson = load_tver_boundary()
+tver_polygon = tver_geojson['features'][0]['geometry']['coordinates'][0] if tver_geojson else []
 cargo_prices = {"маленький": 350, "средний": 500, "большой": 800}
 distance_table = {}  # Можно расширить, если есть данные
 
@@ -297,6 +329,12 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
     base_cost = cargo_prices[cargo_size]
     locality = extract_locality(address)
     st.session_state.locality = locality
+    # Проверка, находится ли точка внутри границ Твери
+    if point_in_polygon((dest_lon, dest_lat), tver_polygon):
+        locality = 'Тверь'
+        total_distance = 0
+        total_cost = base_cost
+        return total_cost, 0, None, locality, total_distance, "город", 0
     nearest_exit, dist_to_exit = find_nearest_exit_point(dest_lat, dest_lon, locality, delivery_date)
     rate_per_km = 15 if use_route_rate else 32
     if locality and locality.lower() == 'тверь':
