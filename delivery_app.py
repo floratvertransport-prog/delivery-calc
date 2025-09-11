@@ -13,7 +13,7 @@ from urllib.parse import urlparse, parse_qs
 # Установка заголовка вкладки
 st.set_page_config(page_title="Флора калькулятор (розница)", page_icon="favicon.png")
 
-# Проверка параметра admin в URL и активация формы пароля
+# Получение параметра admin из URL
 def is_admin_mode():
     query_params = st.query_params
     return query_params.get("admin", "") == "1"
@@ -340,7 +340,7 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
         locality = 'Тверь'
         total_distance = 0
         total_cost = base_cost
-        if st.session_state.get('admin_mode', False):
+        if is_admin_mode() and st.session_state.get('admin_mode', False):
             st.write(f"DEBUG: Point ({dest_lon}, {dest_lat}) is inside Tver polygon.")
         return total_cost, 0, None, locality, total_distance, "город", 0
     nearest_exit, dist_to_exit = find_nearest_exit_point(dest_lat, dest_lon, locality, delivery_date)
@@ -402,15 +402,10 @@ else:
         submit_button = st.form_submit_button(label="Рассчитать")
 
         if is_admin_mode() and not st.session_state.get('admin_mode', False):
-            with st.form(key="admin_form"):
-                admin_password = st.text_input("Админ пароль для отладки", type="password")
-                admin_submit = st.form_submit_button(label="Войти")
-                if admin_submit:
-                    if admin_password == "admin123":
-                        st.session_state.admin_mode = True
-                        st.experimental_rerun()
-                    else:
-                        st.error("Неверный пароль")
+            admin_password = st.text_input("Админ пароль для отладки", type="password")
+            if admin_password == "admin123":
+                st.session_state.admin_mode = True
+                st.experimental_rerun()
 
         if st.session_state.get('admin_mode', False):
             st.write("### Админ-режим активирован")
