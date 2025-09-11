@@ -403,9 +403,9 @@ else:
 
         if is_admin_mode() and not st.session_state.get('admin_mode', False):
             admin_password = st.text_input("Админ пароль для отладки", type="password")
-            if admin_password == "admin123":
+            if st.button("Войти") and admin_password == "admin123":
                 st.session_state.admin_mode = True
-                st.experimental_rerun()
+                st.rerun()
 
         if st.session_state.get('admin_mode', False):
             st.write("### Админ-режим активирован")
