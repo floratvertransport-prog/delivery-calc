@@ -15,8 +15,8 @@ st.set_page_config(page_title="Флора калькулятор (розница
 
 # Получение параметра admin из URL
 def is_admin_mode():
-    query_params = parse_qs(urlparse(st.experimental_get_query_params().get("query", "")).query)
-    return query_params.get("admin", [None])[0] == "1"
+    query_params = st.query_params
+    return query_params.get("admin", "") == "1"
 
 # Центрирование логотипа
 col1, col2, col3 = st.columns([1, 2, 1])
@@ -492,3 +492,4 @@ else:
                 st.error(f"Ошибка: {e}")
             except Exception as e:
                 st.error(f"Ошибка при расчёте: {e}")
+
