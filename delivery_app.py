@@ -13,7 +13,7 @@ from urllib.parse import urlparse, parse_qs
 # Установка заголовка вкладки
 st.set_page_config(page_title="Флора калькулятор (розница)", page_icon="favicon.png")
 
-# Получение параметра admin из URL
+# Проверка параметра admin в URL и активация формы пароля
 def is_admin_mode():
     query_params = st.query_params
     return query_params.get("admin", "") == "1"
@@ -340,7 +340,7 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
         locality = 'Тверь'
         total_distance = 0
         total_cost = base_cost
-        if is_admin_mode():
+        if st.session_state.get('admin_mode', False):
             st.write(f"DEBUG: Point ({dest_lon}, {dest_lat}) is inside Tver polygon.")
         return total_cost, 0, None, locality, total_distance, "город", 0
     nearest_exit, dist_to_exit = find_nearest_exit_point(dest_lat, dest_lon, locality, delivery_date)
@@ -401,7 +401,18 @@ else:
         delivery_date = st.date_input("Дата доставки", value=date.today(), format="DD.MM.YYYY")
         submit_button = st.form_submit_button(label="Рассчитать")
 
-        if is_admin_mode():
+        if is_admin_mode() and not st.session_state.get('admin_mode', False):
+            with st.form(key="admin_form"):
+                admin_password = st.text_input("Админ пароль для отладки", type="password")
+                admin_submit = st.form_submit_button(label="Войти")
+                if admin_submit:
+                    if admin_password == "admin123":
+                        st.session_state.admin_mode = True
+                        st.experimental_rerun()
+                    else:
+                        st.error("Неверный пароль")
+
+        if st.session_state.get('admin_mode', False):
             st.write("### Админ-режим активирован")
             st.write("Точки выхода из Твери:")
             for i, point in enumerate(exit_points, 1):
@@ -472,7 +483,7 @@ else:
                 result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key, delivery_date, use_route_rate))
                 cost, dist_to_exit, nearest_exit, locality, total_distance, source, rate_per_km = result
                 st.success(f"Стоимость доставки: {cost} руб.")
-                if is_admin_mode():
+                if st.session_state.get('admin_mode', False):
                     st.write(f"Координаты адреса: lat={dest_lat}, lon={dest_lon}")
                     st.write(f"Ближайшая точка выхода: {nearest_exit}")
                     st.write(f"Расстояние до ближайшей точки выхода (по прямой): {dist_to_exit:.2f} км")
@@ -492,4 +503,3 @@ else:
                 st.error(f"Ошибка: {e}")
             except Exception as e:
                 st.error(f"Ошибка при расчёте: {e}")
-
