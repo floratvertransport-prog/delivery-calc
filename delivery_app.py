@@ -8,9 +8,15 @@ import json
 import subprocess
 from datetime import date, datetime
 from typing import Dict, List, Tuple
+from urllib.parse import urlparse, parse_qs
 
 # Установка заголовка вкладки
 st.set_page_config(page_title="Флора калькулятор (розница)", page_icon="favicon.png")
+
+# Получение параметра admin из URL
+def is_admin_mode():
+    query_params = parse_qs(urlparse(st.experimental_get_query_params().get("query", "")).query)
+    return query_params.get("admin", [None])[0] == "1"
 
 # Центрирование логотипа
 col1, col2, col3 = st.columns([1, 2, 1])
@@ -38,8 +44,7 @@ def load_tver_boundary():
     if os.path.exists(cache_file):
         try:
             with open(cache_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data
+                return json.load(f)
         except Exception as e:
             st.warning(f"Ошибка при загрузке tver_boundaries.geojson: {e}")
             return {}
@@ -47,7 +52,7 @@ def load_tver_boundary():
 
 # Проверка, находится ли точка внутри полигона (алгоритм ray casting)
 def point_in_polygon(point, polygon):
-    x, y = point  # Ожидаем (lon, lat)
+    x, y = point
     n = len(polygon)
     inside = False
     p1x, p1y = polygon[0]
@@ -66,9 +71,7 @@ def point_in_polygon(point, polygon):
 # Инициализация данных
 load_routes()
 tver_geojson = load_tver_boundary()
-tver_polygon = tver_geojson['features'][0]['geometry']['coordinates'][0] if tver_geojson and tver_geojson.get('features') else []
-if not tver_polygon:
-    st.warning("Границы Твери не загружены. Проверьте tver_boundaries.geojson.")
+tver_polygon = tver_geojson['features'][0]['geometry']['coordinates'][0] if tver_geojson else []
 cargo_prices = {"маленький": 350, "средний": 500, "большой": 800}
 distance_table = {}  # Можно расширить, если есть данные
 
@@ -334,13 +337,12 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
     st.session_state.locality = locality
     # Проверка, находится ли точка внутри границ Твери
     if point_in_polygon((dest_lon, dest_lat), tver_polygon):
-        st.write(f"DEBUG: Point ({dest_lon}, {dest_lat}) is inside Tver polygon.")
         locality = 'Тверь'
         total_distance = 0
         total_cost = base_cost
+        if is_admin_mode():
+            st.write(f"DEBUG: Point ({dest_lon}, {dest_lat}) is inside Tver polygon.")
         return total_cost, 0, None, locality, total_distance, "город", 0
-    else:
-        st.write(f"DEBUG: Point ({dest_lon}, {dest_lat}) is outside Tver polygon.")
     nearest_exit, dist_to_exit = find_nearest_exit_point(dest_lat, dest_lon, locality, delivery_date)
     rate_per_km = 15 if use_route_rate else 32
     if locality and locality.lower() == 'тверь':
@@ -397,10 +399,10 @@ else:
         cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
         address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
         delivery_date = st.date_input("Дата доставки", value=date.today(), format="DD.MM.YYYY")
-        admin_password = st.text_input("Админ пароль для отладки (оставьте пустым для обычного режима)", type="password")
         submit_button = st.form_submit_button(label="Рассчитать")
 
-        if admin_password == "admin123":
+        if is_admin_mode():
+            st.write("### Админ-режим активирован")
             st.write("Точки выхода из Твери:")
             for i, point in enumerate(exit_points, 1):
                 st.write(f"Точка {i}: {point}")
@@ -414,7 +416,7 @@ else:
             if 'cache_before_save' in st.session_state:
                 st.write(f"Кэш перед сохранением: {st.session_state.cache_before_save}")
             if 'cache_after_save' in st.session_state:
-                st.write(f"Кэш после сохранения: {st.session_state.cache_after_save}")
+                st.write(f"Кэш после сохранением: {st.session_state.cache_after_save}")
             if 'save_cache_error' in st.session_state:
                 st.write(f"Ошибка сохранения кэша: {st.session_state.save_cache_error}")
             if 'git_sync_status' in st.session_state:
@@ -470,7 +472,7 @@ else:
                 result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key, delivery_date, use_route_rate))
                 cost, dist_to_exit, nearest_exit, locality, total_distance, source, rate_per_km = result
                 st.success(f"Стоимость доставки: {cost} руб.")
-                if admin_password == "admin123":
+                if is_admin_mode():
                     st.write(f"Координаты адреса: lat={dest_lat}, lon={dest_lon}")
                     st.write(f"Ближайшая точка выхода: {nearest_exit}")
                     st.write(f"Расстояние до ближайшей точки выхода (по прямой): {dist_to_exit:.2f} км")
