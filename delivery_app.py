@@ -407,7 +407,7 @@ else:
         cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
         address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
         delivery_date = st.date_input("Дата доставки", value=date.today(), format="DD.MM.YYYY")
-        submit_button = st.form_submit_button(label="Рассчитать", disabled=False)
+        submit_button = st.form_submit_button(label="Рассчитать", disabled=st.session_state.get("disabled", False))
 
         if is_admin_mode():
             st.write("### Админ-режим активирован")
@@ -513,7 +513,7 @@ else:
                     st.error(f"Ошибка при расчёте: {e}")
             # Активируем кнопку обратно после завершения
             st.session_state.disabled = False
-            st.experimental_rerun()
+            st.rerun()
 
 # Инициализация состояния кнопки
 if "disabled" not in st.session_state:
