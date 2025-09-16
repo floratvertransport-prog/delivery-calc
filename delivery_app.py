@@ -456,67 +456,66 @@ else:
                     for locality, data in cache.items():
                         st.write(f"{locality}: {data['distance']} км (точка выхода: {data['exit_point']})")
 
-    # Обработка нажатия кнопки вне формы, чтобы избежать конфликтов
-    if st.session_state.get("submit_trigger", False) and address:
-        st.session_state.disabled = True
-        with st.spinner("Расчёт стоимости..."):
-            try:
-                dest_lat, dest_lon = geocode_address(address, api_key)
-                locality = extract_locality(address)
-                use_route_rate = False
-                if check_route_match(locality, delivery_date):
-                    st.write("👉 Вы можете доставить этот заказ вместе с оптовыми клиентами")
-                    st.write("Доставка по рейсу вместе с оптовыми заказами")
-                    use_route = st.checkbox("Использовать доставку по рейсу")
-                    if use_route:
-                        if not st.session_state.get('route_confirmed', False):
-                            confirm = st.radio("Вы точно уверены, что возможна доставка вместе с оптовыми заказами? Время или объём позволяют осуществить доставку вместе с рейсом?", ("Нет", "Да"))
-                            if confirm == "Да":
-                                st.session_state.route_confirmed = True
-                                use_route_rate = True
+        if submit_button and address:
+            # Деактивируем кнопку и показываем spinner
+            st.session_state.disabled = True
+            with st.spinner("Расчёт стоимости..."):
+                try:
+                    dest_lat, dest_lon = geocode_address(address, api_key)
+                    locality = extract_locality(address)
+                    use_route_rate = False
+                    if check_route_match(locality, delivery_date):
+                        st.write("👉 Вы можете доставить этот заказ вместе с оптовыми клиентами")
+                        st.write("Доставка по рейсу вместе с оптовыми заказами")
+                        use_route = st.checkbox("Использовать доставку по рейсу")
+                        if use_route:
+                            if not st.session_state.get('route_confirmed', False):
+                                confirm = st.radio("Вы точно уверены, что возможна доставка вместе с оптовыми заказами? Время или объём позволяют осуществить доставку вместе с рейсом?", ("Нет", "Да"))
+                                if confirm == "Да":
+                                    st.session_state.route_confirmed = True
+                                    use_route_rate = True
+                                else:
+                                    st.session_state.route_confirmed = False
+                                    use_route_rate = False
                             else:
-                                st.session_state.route_confirmed = False
-                                use_route_rate = False
+                                use_route_rate = True
                         else:
-                            use_route_rate = True
+                            use_route_rate = False
+                            if 'route_confirmed' in st.session_state:
+                                del st.session_state.route_confirmed
                     else:
-                        use_route_rate = False
+                        if 'use_route' in st.session_state:
+                            del st.session_state.use_route
                         if 'route_confirmed' in st.session_state:
                             del st.session_state.route_confirmed
-                else:
-                    if 'use_route' in st.session_state:
-                        del st.session_state.use_route
-                    if 'route_confirmed' in st.session_state:
-                        del st.session_state.route_confirmed
-                result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key, delivery_date, use_route_rate))
-                cost, dist_to_exit, nearest_exit, locality, total_distance, source, rate_per_km = result
-                st.session_state.cost = cost  # Сохраняем стоимость в сессии
-                if is_admin_mode():
-                    st.write(f"Координаты адреса: lat={dest_lat}, lon={dest_lon}")
-                    st.write(f"Ближайшая точка выхода: {nearest_exit}")
-                    st.write(f"Расстояние до ближайшей точки выхода (по прямой): {dist_to_exit:.2f} км")
-                    st.write(f"Извлечённый населённый пункт: {locality}")
-                    st.write(f"Источник расстояния: {source}")
-                    if source == "город":
-                        st.write(f"Населённый пункт: {locality} (доставка в пределах Твери)")
-                        st.write(f"Километраж: {total_distance} км (без доплаты)")
-                        st.write(f"Базовая стоимость: {cost} руб. (без округления)")
-                    elif source in ["таблица", "кэш", "ors", "haversine"]:
-                        st.write(f"Населённый пункт: {locality}")
-                        st.write(f"Километраж (туда и обратно): {total_distance:.2f} км")
-                        st.write(f"Доплата: {total_distance:.2f} × {rate_per_km} = {total_distance * rate_per_km:.2f} руб.")
-                    st.write(f"Дата доставки: {delivery_date.strftime('%d.%m.%Y')} ({delivery_date.strftime('%A')})")
-                    st.write(f"Использован рейс: {use_route_rate}")
-            except ValueError as e:
-                st.error(f"Ошибка: {e}")
-            except Exception as e:
-                st.error(f"Ошибка при расчёте: {e}")
-        # Активируем кнопку обратно после завершения
-        st.session_state.disabled = False
-        st.session_state.submit_trigger = False  # Сбрасываем триггер
-        st.rerun()
+                    result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key, delivery_date, use_route_rate))
+                    cost, dist_to_exit, nearest_exit, locality, total_distance, source, rate_per_km = result
+                    st.session_state.cost = cost  # Сохраняем стоимость в сессии
+                    if is_admin_mode():
+                        st.write(f"Координаты адреса: lat={dest_lat}, lon={dest_lon}")
+                        st.write(f"Ближайшая точка выхода: {nearest_exit}")
+                        st.write(f"Расстояние до ближайшей точки выхода (по прямой): {dist_to_exit:.2f} км")
+                        st.write(f"Извлечённый населённый пункт: {locality}")
+                        st.write(f"Источник расстояния: {source}")
+                        if source == "город":
+                            st.write(f"Населённый пункт: {locality} (доставка в пределах Твери)")
+                            st.write(f"Километраж: {total_distance} км (без доплаты)")
+                            st.write(f"Базовая стоимость: {cost} руб. (без округления)")
+                        elif source in ["таблица", "кэш", "ors", "haversine"]:
+                            st.write(f"Населённый пункт: {locality}")
+                            st.write(f"Километраж (туда и обратно): {total_distance:.2f} км")
+                            st.write(f"Доплата: {total_distance:.2f} × {rate_per_km} = {total_distance * rate_per_km:.2f} руб.")
+                        st.write(f"Дата доставки: {delivery_date.strftime('%d.%m.%Y')} ({delivery_date.strftime('%A')})")
+                        st.write(f"Использован рейс: {use_route_rate}")
+                except ValueError as e:
+                    st.error(f"Ошибка: {e}")
+                except Exception as e:
+                    st.error(f"Ошибка при расчёте: {e}")
+            # Активируем кнопку обратно после завершения
+            st.session_state.disabled = False
+            st.rerun()
 
-    # Отображение результата
+    # Отображение результата вне формы
     if "cost" in st.session_state:
         st.success(f"Стоимость доставки: {st.session_state.cost} руб.")
         del st.session_state.cost  # Очищаем после отображения
@@ -524,9 +523,3 @@ else:
 # Инициализация состояния
 if "disabled" not in st.session_state:
     st.session_state.disabled = False
-if "submit_trigger" not in st.session_state:
-    st.session_state.submit_trigger = False
-
-# Активируем триггер при отправке формы
-if submit_button:
-    st.session_state.submit_trigger = True
