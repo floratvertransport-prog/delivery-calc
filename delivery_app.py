@@ -126,13 +126,8 @@ def load_cache():
 def save_cache(cache):
     cache_file = 'cache.json'
     try:
-        st.session_state.cache_before_save = cache
         with open(cache_file, 'w', encoding='utf-8') as f:
             json.dump(cache, f, ensure_ascii=False, indent=2)
-        if os.path.exists(cache_file):
-            with open(cache_file, 'r', encoding='utf-8') as f:
-                saved_cache = json.load(f)
-                st.session_state.cache_after_save = saved_cache
         # Настройка Git
         try:
             if not os.path.exists('.git'):
@@ -416,10 +411,6 @@ else:
             st.write(f"Версия Streamlit: {st.__version__}")
             st.write(f"Версия aiohttp: {aiohttp.__version__}")
             st.write(f"Проверка GIT_TOKEN: {check_git_token()}")
-            if 'cache_before_save' in st.session_state:
-                st.write(f"Кэш перед сохранением: {st.session_state.cache_before_save}")
-            if 'cache_after_save' in st.session_state:
-                st.write(f"Кэш после сохранением: {st.session_state.cache_after_save}")
             if 'save_cache_error' in st.session_state:
                 st.write(f"Ошибка сохранения кэша: {st.session_state.save_cache_error}")
             if 'git_sync_status' in st.session_state:
@@ -457,8 +448,9 @@ else:
                         st.write(f"{locality}: {data['distance']} км (точка выхода: {data['exit_point']})")
 
         if submit_button and address:
-            # Деактивируем кнопку и показываем spinner
+            # Устанавливаем состояние блокировки кнопки
             st.session_state.disabled = True
+            # Выполняем расчёт с индикатором загрузки
             with st.spinner("Расчёт стоимости..."):
                 try:
                     dest_lat, dest_lon = geocode_address(address, api_key)
@@ -511,7 +503,7 @@ else:
                     st.error(f"Ошибка: {e}")
                 except Exception as e:
                     st.error(f"Ошибка при расчёте: {e}")
-            # Активируем кнопку обратно после завершения
+            # Сбрасываем состояние блокировки кнопки
             st.session_state.disabled = False
             st.rerun()
 
