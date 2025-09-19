@@ -9,16 +9,20 @@ import subprocess
 from datetime import date, datetime
 from typing import Dict, List, Tuple
 
+# Установка заголовка вкладки
 st.set_page_config(page_title="Флора калькулятор (розница)", page_icon="favicon.png")
 
+# Получение параметра admin из URL
 def is_admin_mode():
     query_params = st.query_params
     return query_params.get("admin", "") == "1"
 
+# Центрирование логотипа
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     st.image("logo.png", width=533)
 
+# Загрузка routes.json
 def load_routes():
     cache_file = 'routes.json'
     if os.path.exists(cache_file):
@@ -40,6 +44,7 @@ def load_routes():
         return {}
 load_routes()
 
+# Загрузка границ Твери из GeoJSON
 def load_tver_boundary():
     cache_file = 'tver_boundaries.geojson'
     if os.path.exists(cache_file):
@@ -51,6 +56,7 @@ def load_tver_boundary():
             return {}
     return {}
 
+# Проверка, находится ли точка внутри полигона (алгоритм ray casting)
 def point_in_polygon(point, polygon):
     x, y = point
     n = len(polygon)
@@ -68,11 +74,13 @@ def point_in_polygon(point, polygon):
         p1x, p1y = p2x, p2y
     return inside
 
+# Инициализация данных
 tver_geojson = load_tver_boundary()
 tver_polygon = tver_geojson['features'][0]['geometry']['coordinates'][0] if tver_geojson and tver_geojson.get('features') else []
 cargo_prices = {"маленький": 350, "средний": 500, "большой": 800}
-distance_table = {}
+distance_table = {}  # Можно расширить, если есть данные
 
+# Словари населённых пунктов с привязкой к конкретным точкам выхода
 no_route_localities_point_8 = {
     "деревня Аввакумово": (56.879706, 36.006304),
     "деревня Аркатово": (56.890298, 36.029007),
@@ -89,6 +97,7 @@ no_route_localities_point_7 = {
     "деревня Спичево": (56.823067, 35.612344)
 }
 
+# Функция Haversine
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
     lat1_rad = math.radians(lat1)
@@ -102,6 +111,7 @@ def haversine(lat1, lon1, lat2, lon2):
     distance = R * c
     return distance
 
+# Функции для кэша
 def load_cache():
     cache_file = 'cache.json'
     if os.path.exists(cache_file):
@@ -123,6 +133,7 @@ def save_cache(cache):
             with open(cache_file, 'r', encoding='utf-8') as f:
                 saved_cache = json.load(f)
                 st.session_state.cache_after_save = saved_cache
+        # Настройка Git
         try:
             if not os.path.exists('.git'):
                 subprocess.run(['git', 'init'], check=True, capture_output=True, text=True)
@@ -130,13 +141,16 @@ def save_cache(cache):
             git_token = os.environ.get('GIT_TOKEN')
             if git_token:
                 git_repo = git_repo.replace('https://', f'https://{git_token}@')
+            # Проверяем и добавляем origin
             remote_output = subprocess.run(['git', 'remote', '-v'], capture_output=True, text=True)
             st.session_state.git_remote_status = f"Git remote: {remote_output.stdout.replace(git_token, '******') if git_token else remote_output.stdout or 'No remotes set'}"
             if 'origin' not in remote_output.stdout:
                 subprocess.run(['git', 'remote', 'add', 'origin', git_repo], check=True, capture_output=True, text=True)
                 st.session_state.git_remote_status = f"Git remote: added origin {git_repo.replace(git_token, '******') if git_token else git_repo}"
+            # Настраиваем Git
             subprocess.run(['git', 'config', '--global', 'user.name', os.environ.get('GIT_USER', 'floratvertransport-prog')], check=True, capture_output=True, text=True)
             subprocess.run(['git', 'config', '--global', 'user.email', 'floratvertransport-prog@example.com'], check=True, capture_output=True, text=True)
+            # Проверяем текущую ветку и исправляем detached HEAD
             branch_output = subprocess.run(['git', 'branch'], capture_output=True, text=True)
             st.session_state.git_branch_status = f"Git branch: {branch_output.stdout}"
             if 'detached' in branch_output.stdout:
@@ -145,6 +159,7 @@ def save_cache(cache):
                 subprocess.run(['git', 'fetch', 'origin'], check=True, capture_output=True, text=True)
                 subprocess.run(['git', 'checkout', '-B', 'main', 'origin/main'], check=True, capture_output=True, text=True)
                 st.session_state.git_branch_status = f"Git branch: switched to main"
+            # Синхронизируем ветку
             try:
                 fetch_result = subprocess.run(['git', 'fetch', 'origin'], check=True, capture_output=True, text=True)
                 st.session_state.git_fetch_status = f"Git fetch: {fetch_result.stdout or 'Success'}"
@@ -153,6 +168,7 @@ def save_cache(cache):
             except subprocess.CalledProcessError as e:
                 st.session_state.git_sync_status = f"Ошибка git pull: {e}\nSTDERR: {e.stderr}"
                 return
+            # Проверяем изменения
             status_result = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True)
             st.session_state.git_status = f"Git status: {status_result.stdout}"
             if cache_file in status_result.stdout:
@@ -170,6 +186,7 @@ def save_cache(cache):
     except Exception as e:
         st.session_state.save_cache_error = f"Ошибка при сохранении кэша: {e}"
 
+# Проверка GIT_TOKEN
 def check_git_token():
     git_token = os.environ.get('GIT_TOKEN')
     if not git_token:
@@ -183,6 +200,7 @@ def check_git_token():
     except Exception as e:
         return f"Ошибка проверки GIT_TOKEN: {str(e)}"
 
+# Геокодирование через Яндекс
 @st.cache_data
 def geocode_address(address, api_key):
     url = f"https://geocode-maps.yandex.ru/1.x/?apikey={api_key}&geocode={address}&format=json"
@@ -198,6 +216,7 @@ def geocode_address(address, api_key):
     else:
         raise ValueError(f"Ошибка API: {response.status_code}")
 
+# Получение IP сервера
 async def get_server_ip():
     try:
         async with aiohttp.ClientSession() as session:
@@ -212,45 +231,294 @@ async def get_server_ip():
     except Exception as e:
         return f"Неизвестная ошибка при получении IP: {str(e)}"
 
-st.header("Калькулятор стоимости доставки по Твери и области для розничных клиентов")
+# Запрос к ORS
+async def get_road_distance_ors(start_lon, start_lat, end_lon, end_lat, api_key):
+    url = "https://api.openrouteservice.org/v2/directions/driving-car"
+    headers = {
+        "Authorization": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/geo+json"
+    }
+    body = {
+        "coordinates": [[start_lon, start_lat], [end_lon, end_lat]],
+        "units": "km",
+        "radiuses": [1000, 1000]
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=body, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    distance = data["routes"][0]["summary"]["distance"]
+                    return distance
+                else:
+                    error_data = await response.json()
+                    error_code = error_data.get("error", {}).get("code", 0)
+                    error_msg = error_data.get("error", {}).get("message", "Неизвестная ошибка")
+                    if error_code == 2010:
+                        raise ValueError(f"ORS не нашёл маршрут для координат: {error_msg}. Используется Haversine.")
+                    raise ValueError(f"Ошибка ORS API: HTTP {response.status}. Код: {error_code}. Сообщение: {error_msg}")
+    except aiohttp.ClientError as e:
+        raise ValueError(f"Ошибка соединения с ORS API: {str(e)}")
 
-with st.form("delivery_form"):
-    address = st.text_input("Введите адрес доставки")
-    cargo_size = st.selectbox("Выберите размер груза", ["маленький", "средний", "большой"])
-    delivery_date = st.date_input("Дата доставки", date.today())
-    submit_button = st.form_submit_button("Рассчитать")
+# Поиск ближайшей точки выхода с точной привязкой по координатам
+def find_nearest_exit_point(dest_lat, dest_lon, locality, delivery_date):
+    min_dist = float('inf')
+    nearest_exit = None
+    tolerance = 0.01  # Допуск в градусах (около 1 км)
 
-    if submit_button:
-        with st.spinner("Выполняется расчёт..."):
-            st.write("Здесь будет логика расчёта доставки (calculate_delivery_cost и т.д.)")
+    # Проверка координат для привязки к точке 8
+    for loc, (lat, lon) in no_route_localities_point_8.items():
+        if abs(dest_lat - lat) < tolerance and abs(dest_lon - lon) < tolerance:
+            nearest_exit = exit_points[7] if len(exit_points) > 7 else None  # Точка 8 (индекс 7)
+            if nearest_exit:
+                min_dist = haversine(dest_lat, dest_lon, nearest_exit[1], nearest_exit[0])
+                return nearest_exit, min_dist
 
-if is_admin_mode():
-    st.write("### Админ-режим активирован")
-    server_ip = asyncio.run(get_server_ip())
-    st.write(f"IP сервера Render: {server_ip}")
-    st.write(f"Версия Streamlit: {st.__version__}")
-    st.write(f"Версия aiohttp: {aiohttp.__version__}")
-    st.write(f"Проверка GIT_TOKEN: {check_git_token()}")
+    # Проверка координат для привязки к точке 7
+    for loc, (lat, lon) in no_route_localities_point_7.items():
+        if abs(dest_lat - lat) < tolerance and abs(dest_lon - lon) < tolerance:
+            nearest_exit = exit_points[6] if len(exit_points) > 6 else None  # Точка 7 (индекс 6)
+            if nearest_exit:
+                min_dist = haversine(dest_lat, dest_lon, nearest_exit[1], nearest_exit[0])
+                return nearest_exit, min_dist
 
-    if 'cache_before_save' in st.session_state:
-        with st.expander("Кэш перед сохранением"):
-            st.json(st.session_state.cache_before_save)
+    # Если нет точного соответствия, ищем ближайшую точку
+    if exit_points:
+        for exit_point in exit_points:
+            dist = haversine(dest_lat, dest_lon, exit_point[1], exit_point[0])
+            if dist < min_dist:
+                min_dist = dist
+                nearest_exit = exit_point
+    return nearest_exit, min_dist
 
-    if 'cache_after_save' in st.session_state:
-        with st.expander("Кэш после сохранения"):
-            st.json(st.session_state.cache_after_save)
+# Извлечение населённого пункта с точным соответствием
+def extract_locality(address):
+    known_localities = {**no_route_localities_point_8, **no_route_localities_point_7}
+    if 'тверь' in address.lower():
+        return 'Тверь'
+    if 'завидово' in address.lower() and not 'новозавидовский' in address.lower():
+        return 'село Завидово'
+    if 'новозавидовский' in address.lower():
+        return 'посёлок городского типа Новозавидовский'
+    cache = load_cache()
+    for locality, (lat, lon) in known_localities.items():
+        if locality.lower() in address.lower():
+            return locality
+    parts = address.split(',')
+    for part in parts:
+        part = part.strip()
+        if part and 'область' not in part.lower() and 'ул.' not in part.lower() and 'г.' not in part.lower():
+            return part
+    return None
 
-    if 'save_cache_error' in st.session_state:
-        st.write(f"Ошибка сохранения кэша: {st.session_state.save_cache_error}")
-    if 'git_sync_status' in st.session_state:
-        st.write(f"Статус синхронизации с GitHub: {st.session_state.git_sync_status}")
-    if 'git_fetch_status' in st.session_state:
-        st.write(f"Статус git fetch: {st.session_state.git_fetch_status}")
-    if 'git_pull_status' in st.session_state:
-        st.write(f"Статус git pull: {st.session_state.git_pull_status}")
-    if 'git_remote_status' in st.session_state:
-        st.write(st.session_state.git_remote_status)
-    if 'git_branch_status' in st.session_state:
-        st.write(st.session_state.git_branch_status)
-    if 'git_status' in st.session_state:
-        st.write(st.session_state.git_status)
+# Проверка соответствия рейсу
+def check_route_match(locality, delivery_date):
+    if not locality or not delivery_date or not route_groups:
+        return False
+    # Исключение для населённых пунктов без рейсов
+    if locality in no_route_localities_point_8 or locality in no_route_localities_point_7:
+        return False
+    day_of_week = delivery_date.weekday()
+    if str(day_of_week) not in route_groups:
+        return False
+    for route_name, route_locations in route_groups[str(day_of_week)].items():
+        for point in route_locations:
+            if locality.lower() in point["name"].lower():
+                return True
+    return False
+
+# Округление стоимости
+def round_cost(cost):
+    remainder = cost % 100
+    if remainder <= 20:
+        return (cost // 100) * 100
+    else:
+        return ((cost // 100) + 1) * 100
+
+# Расчёт стоимости с учетом рейса
+async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key, delivery_date=None, use_route_rate=False):
+    if cargo_size not in cargo_prices:
+        raise ValueError("Неверный размер груза. Доступны: маленький, средний, большой")
+    base_cost = cargo_prices[cargo_size]
+    locality = extract_locality(address)
+    st.session_state.locality = locality
+    # Проверка, находится ли точка внутри границ Твери
+    if point_in_polygon((dest_lon, dest_lat), tver_polygon):
+        locality = 'Тверь'
+        total_distance = 0
+        total_cost = base_cost
+        if is_admin_mode():
+            st.write(f"DEBUG: Point ({dest_lon}, {dest_lat}) is inside Tver polygon.")
+        return total_cost, 0, None, locality, total_distance, "город", 0
+    nearest_exit, dist_to_exit = find_nearest_exit_point(dest_lat, dest_lon, locality, delivery_date)
+    rate_per_km = 15 if use_route_rate else 32
+    if locality and locality.lower() == 'тверь':
+        total_distance = 0
+        total_cost = base_cost
+        return total_cost, dist_to_exit, nearest_exit, locality, total_distance, "город", rate_per_km
+    cache = load_cache()
+    if locality and locality in cache:
+        total_distance = cache[locality]['distance']
+        extra_cost = total_distance * rate_per_km
+        total_cost = base_cost + extra_cost
+        rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
+        return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "кэш", rate_per_km
+    if routing_api_key and locality:
+        try:
+            road_distance = await get_road_distance_ors(nearest_exit[0], nearest_exit[1], dest_lon, dest_lat, routing_api_key)
+            total_distance = road_distance * 2
+            extra_cost = total_distance * rate_per_km
+            total_cost = base_cost + extra_cost
+            rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
+            cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
+            save_cache(cache)
+            return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "ors", rate_per_km
+        except ValueError as e:
+            st.warning(f"Ошибка ORS API: {e}. Используется Haversine с коэффициентом 1.3.")
+            road_distance = dist_to_exit * 1.3
+            total_distance = road_distance * 2
+            extra_cost = total_distance * rate_per_km
+            total_cost = base_cost + extra_cost
+            rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
+            if locality:
+                cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
+                save_cache(cache)
+            return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "haversine", rate_per_km
+    road_distance = dist_to_exit * 1.3
+    total_distance = road_distance * 2
+    extra_cost = total_distance * rate_per_km
+    total_cost = base_cost + extra_cost
+    rounded_cost = round_cost(total_cost) if total_distance > 0 else base_cost
+    if locality:
+        cache[locality] = {'distance': total_distance, 'exit_point': nearest_exit}
+        save_cache(cache)
+    return rounded_cost, dist_to_exit, nearest_exit, locality, total_distance, "haversine", rate_per_km
+
+# Streamlit UI
+if 'calculating' not in st.session_state:
+    st.session_state.calculating = False
+
+st.title("Калькулятор стоимости доставки по Твери и области для розничных клиентов")
+st.write("Введите адрес доставки, выберите размер груза и дату доставки.")
+api_key = os.environ.get("API_KEY")
+routing_api_key = os.environ.get("ORS_API_KEY")
+if not api_key:
+    st.error("Ошибка: API-ключ для геокодирования не настроен. Обратитесь к администратору.")
+else:
+    with st.form(key="delivery_form"):
+        cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
+        address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
+        delivery_date = st.date_input("Дата доставки", value=date.today(), format="DD.MM.YYYY")
+        if st.session_state.calculating:
+            st.form_submit_button(label="Рассчитать", disabled=True)
+            submit_button = False
+        else:
+            submit_button = st.form_submit_button(label="Рассчитать")
+
+        if is_admin_mode():
+            st.write("### Админ-режим активирован")
+            server_ip = asyncio.run(get_server_ip())
+            st.write(f"IP сервера Render: {server_ip}")
+            st.write(f"Версия Streamlit: {st.__version__}")
+            st.write(f"Версия aiohttp: {aiohttp.__version__}")
+            st.write(f"Проверка GIT_TOKEN: {check_git_token()}")
+            if 'cache_before_save' in st.session_state:
+                st.write(f"Кэш перед сохранением: {st.session_state.cache_before_save}")
+            if 'cache_after_save' in st.session_state:
+                st.write(f"Кэш после сохранением: {st.session_state.cache_after_save}")
+            if 'save_cache_error' in st.session_state:
+                st.write(f"Ошибка сохранения кэша: {st.session_state.save_cache_error}")
+            if 'git_sync_status' in st.session_state:
+                st.write(f"Статус синхронизации с GitHub: {st.session_state.git_sync_status}")
+            if 'git_fetch_status' in st.session_state:
+                st.write(f"Статус git fetch: {st.session_state.git_fetch_status}")
+            if 'git_pull_status' in st.session_state:
+                st.write(f"Статус git pull: {st.session_state.git_pull_status}")
+            if 'git_remote_status' in st.session_state:
+                st.write(st.session_state.git_remote_status)
+            if 'git_branch_status' in st.session_state:
+                st.write(st.session_state.git_branch_status)
+            if 'git_status' in st.session_state:
+                st.write(st.session_state.git_status)
+            if not routing_api_key:
+                st.warning("ORS_API_KEY не настроен. Для неизвестных адресов используется Haversine с коэффициентом 1.3.")
+            else:
+                st.success("ORS_API_KEY настроен. Расстояние будет рассчитано по реальным дорогам.")
+
+            # Сворачиваемые секции
+            with st.expander("Точки выхода из Твери"):
+                if exit_points:
+                    for i, point in enumerate(exit_points, 1):
+                        st.write(f"Точка {i}: {point}")
+                else:
+                    st.write("Данные о точках выхода отсутствуют (routes.json не загружен).")
+
+            cache = load_cache()
+            with st.expander("Текущий кэш"):
+                st.write(f"Текущий кэш: {cache}")
+
+            if cache:
+                with st.expander("Кэш расстояний"):
+                    for locality, data in cache.items():
+                        st.write(f"{locality}: {data['distance']} км (точка выхода: {data['exit_point']})")
+
+        if submit_button and address:
+            st.session_state.calculating = True
+            try:
+                try:
+                    with st.spinner('Считаем стоимость, пожалуйста, подождите...'):
+                        dest_lat, dest_lon = geocode_address(address, api_key)
+                        locality = extract_locality(address)
+                        use_route_rate = False
+                        if check_route_match(locality, delivery_date):
+                            st.write("👉 Вы можете доставить этот заказ вместе с оптовыми клиентами")
+                            st.write("Доставка по рейсу вместе с оптовыми заказами")
+                            use_route = st.checkbox("Использовать доставку по рейсу")
+                            if use_route:
+                                if not st.session_state.get('route_confirmed', False):
+                                    confirm = st.radio("Вы точно уверены, что возможна доставка вместе с оптовыми заказами? Время или объём позволяют осуществить доставку вместе с рейсом?", ("Нет", "Да"))
+                                    if confirm == "Да":
+                                        st.session_state.route_confirmed = True
+                                        use_route_rate = True
+                                    else:
+                                        st.session_state.route_confirmed = False
+                                        use_route_rate = False
+                                else:
+                                    use_route_rate = True
+                            else:
+                                use_route_rate = False
+                                if 'route_confirmed' in st.session_state:
+                                    del st.session_state.route_confirmed
+                        else:
+                            if 'use_route' in st.session_state:
+                                del st.session_state.use_route
+                            if 'route_confirmed' in st.session_state:
+                                del st.session_state.route_confirmed
+                        result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key, delivery_date, use_route_rate))
+                except ValueError as e:
+                    raise e
+                cost, dist_to_exit, nearest_exit, locality, total_distance, source, rate_per_km = result
+                st.success(f"Стоимость доставки: {cost} руб.")
+                if is_admin_mode():
+                    st.write(f"Координаты адреса: lat={dest_lat}, lon={dest_lon}")
+                    st.write(f"Ближайшая точка выхода: {nearest_exit}")
+                    st.write(f"Расстояние до ближайшей точки выхода (по прямой): {dist_to_exit:.2f} км")
+                    st.write(f"Извлечённый населённый пункт: {locality}")
+                    st.write(f"Источник расстояния: {source}")
+                    if source == "город":
+                        st.write(f"Населённый пункт: {locality} (доставка в пределах Твери)")
+                        st.write(f"Километраж: {total_distance} км (без доплаты)")
+                        st.write(f"Базовая стоимость: {cost} руб. (без округления)")
+                    elif source in ["таблица", "кэш", "ors", "haversine"]:
+                        st.write(f"Населённый пункт: {locality}")
+                        st.write(f"Километраж (туда и обратно): {total_distance:.2f} км")
+                        st.write(f"Доплата: {total_distance:.2f} × {rate_per_km} = {total_distance * rate_per_km:.2f} руб.")
+                    st.write(f"Дата доставки: {delivery_date.strftime('%d.%m.%Y')} ({delivery_date.strftime('%A')})")
+                    st.write(f"Использован рейс: {use_route_rate}")
+            except ValueError as e:
+                st.error(f"Ошибка: {e}")
+            except Exception as e:
+                st.error(f"Ошибка при расчёте: {e}")
+            finally:
+                st.session_state.calculating = False
