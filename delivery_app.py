@@ -111,6 +111,55 @@ def haversine(lat1, lon1, lat2, lon2):
     distance = R * c
     return distance
 
+# ----------------------------
+# Новая функция: парсер координат
+# ----------------------------
+def parse_coordinates(input_str: str):
+    """
+    Попробовать распарсить строку как координаты.
+    Принимает форматы:
+      - "lat, lon"
+      - "lon, lat"
+      - "lat lon" / "lon lat"
+      - с ; вместо ,
+    Вернёт (lat, lon) или None.
+    """
+    if not input_str or not isinstance(input_str, str):
+        return None
+    s = input_str.strip()
+    # Уберём лишние слова в конце/начале (если пользователь вставил "координаты: 56.8, 35.9")
+    # Но не трогаем если это обычный адрес.
+    # Попробуем найти два числа в строке.
+    for sep in [',', ';']:
+        if sep in s:
+            parts = [p.strip() for p in s.split(sep) if p.strip() != ""]
+            if len(parts) >= 2:
+                # Берём первые два компонента
+                a, b = parts[0], parts[1]
+                try:
+                    a_f = float(a)
+                    b_f = float(b)
+                    # Определим, какой из них широта (lat) — обычно в [-90,90]
+                    if -90 <= a_f <= 90 and -180 <= b_f <= 180:
+                        return a_f, b_f  # a=lat, b=lon
+                    if -90 <= b_f <= 90 and -180 <= a_f <= 180:
+                        return b_f, a_f  # b=lat, a=lon (обратный порядок)
+                except ValueError:
+                    return None
+    # Попробовать пробел в качестве разделителя (редко)
+    parts = s.split()
+    if len(parts) >= 2:
+        try:
+            a_f = float(parts[0])
+            b_f = float(parts[1])
+            if -90 <= a_f <= 90 and -180 <= b_f <= 180:
+                return a_f, b_f
+            if -90 <= b_f <= 90 and -180 <= a_f <= 180:
+                return b_f, a_f
+        except ValueError:
+            return None
+    return None
+
 # Функции для кэша
 def load_cache():
     cache_file = 'cache.json'
@@ -426,6 +475,7 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
 # Streamlit UI
 st.title("Калькулятор стоимости доставки по Твери и области для розничных клиентов")
 st.write("Введите адрес доставки, выберите размер груза и дату доставки.")
+st.write("Можно вводить адрес или координаты в формате: 56.862957, 35.883402")
 api_key = os.environ.get("API_KEY")
 routing_api_key = os.environ.get("ORS_API_KEY")
 if not api_key:
@@ -486,8 +536,21 @@ else:
 
         if submit_button and address:
             try:
-                dest_lat, dest_lon = geocode_address(address, api_key)
-                locality = extract_locality(address)
+                # --- Новая логика: сначала пробуем распарсить координаты ---
+                coords = parse_coordinates(address)
+                if coords:
+                    dest_lat, dest_lon = coords
+                    # Если введено что-то ещё помимо координат, попытка извлечь locality не нужна.
+                    # Ставим понятный locality: либо Тверь (если внутри полигона), либо текст "Координаты ..."
+                    if tver_polygon and point_in_polygon((dest_lon, dest_lat), tver_polygon):
+                        locality = 'Тверь'
+                    else:
+                        locality = f"Координаты {round(dest_lat,6)},{round(dest_lon,6)}"
+                else:
+                    # Обычный путь — геокодирование через Яндекс
+                    dest_lat, dest_lon = geocode_address(address, api_key)
+                    locality = extract_locality(address)
+
                 use_route_rate = False
                 if check_route_match(locality, delivery_date):
                     st.write("👉 Вы можете доставить этот заказ вместе с оптовыми клиентами")
@@ -513,26 +576,28 @@ else:
                         del st.session_state.use_route
                     if 'route_confirmed' in st.session_state:
                         del st.session_state.route_confirmed
-                result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routing_api_key, delivery_date, use_route_rate))
-                cost, dist_to_exit, nearest_exit, locality, total_distance, source, rate_per_km = result
+
+                # Вызываем основной расчёт (тот же, что был)
+                result = asyncio.run(calculate_delivery_cost(cargo_size, dest_lat, dest_lon, locality if coords else address, routing_api_key, delivery_date, use_route_rate))
+                cost, dist_to_exit, nearest_exit, locality_result, total_distance, source, rate_per_km = result
                 st.success(f"Стоимость доставки: {cost} руб.")
-                # Проверка на возможность доставки с оптовыми заказами
-                if not point_in_polygon((dest_lon, dest_lat), tver_polygon) and not check_route_match(locality, delivery_date):
-                    optimal_day = find_nearest_optimal_day(locality, delivery_date)
+                # Если доставка не в пределах города и нет рейса — предложим ближайший день
+                if not (tver_polygon and point_in_polygon((dest_lon, dest_lat), tver_polygon)) and not check_route_match(locality_result, delivery_date):
+                    optimal_day = find_nearest_optimal_day(locality_result, delivery_date)
                     if optimal_day:
                         st.warning(f"Вы можете предложить клиенту доставить в другой день ({optimal_day}) вместе с оптовыми заказами, чтобы было дешевле. Поменяйте дату в календаре и произведите повторный расчёт стоимости.")
                 if is_admin_mode():
                     st.write(f"Координаты адреса: lat={dest_lat}, lon={dest_lon}")
                     st.write(f"Ближайшая точка выхода: {nearest_exit}")
                     st.write(f"Расстояние до ближайшей точки выхода (по прямой): {dist_to_exit:.2f} км")
-                    st.write(f"Извлечённый населённый пункт: {locality}")
+                    st.write(f"Извлечённый населённый пункт: {locality_result}")
                     st.write(f"Источник расстояния: {source}")
                     if source == "город":
-                        st.write(f"Населённый пункт: {locality} (доставка в пределах Твери)")
+                        st.write(f"Населённый пункт: {locality_result} (доставка в пределах Твери)")
                         st.write(f"Километраж: {total_distance} км (без доплаты)")
                         st.write(f"Базовая стоимость: {cost} руб. (без округления)")
                     elif source in ["таблица", "кэш", "ors", "haversine"]:
-                        st.write(f"Населённый пункт: {locality}")
+                        st.write(f"Населённый пункт: {locality_result}")
                         st.write(f"Километраж (туда и обратно): {total_distance:.2f} км")
                         st.write(f"Доплата: {total_distance:.2f} × {rate_per_km} = {total_distance * rate_per_km:.2f} руб.")
                     st.write(f"Дата доставки: {delivery_date.strftime('%d.%m.%Y')} ({delivery_date.strftime('%A')})")
