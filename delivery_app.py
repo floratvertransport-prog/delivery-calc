@@ -6,7 +6,7 @@ import asyncio
 import aiohttp
 import json
 import subprocess
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Tuple
 
 # Установка заголовка вкладки
@@ -340,7 +340,7 @@ def find_nearest_optimal_day(locality, current_date):
             for route_name, route_locations in route_groups[str(next_day)].items():
                 for point in route_locations:
                     if locality.lower() in point["name"].lower():
-                        new_date = current_date + datetime.timedelta(days=i)
+                        new_date = current_date + timedelta(days=i)
                         return new_date.strftime('%A')
     return None
 
