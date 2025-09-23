@@ -475,6 +475,7 @@ async def calculate_delivery_cost(cargo_size, dest_lat, dest_lon, address, routi
 # Streamlit UI
 st.title("Калькулятор стоимости доставки по Твери и области для розничных клиентов")
 st.write("Введите адрес доставки, выберите размер груза и дату доставки.")
+st.write("Можно вводить адрес или координаты в формате: 56.862957, 35.883402")
 api_key = os.environ.get("API_KEY")
 routing_api_key = os.environ.get("ORS_API_KEY")
 if not api_key:
@@ -482,7 +483,7 @@ if not api_key:
 else:
     with st.form(key="delivery_form"):
         cargo_size = st.selectbox("Размер груза", ["маленький", "средний", "большой"])
-        address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10','Тверская область, Вараксино' или координаты в формате: 56.862957, 35.883402)", value="Тверская область, ")
+        address = st.text_input("Адрес доставки (например, 'Тверь, ул. Советская, 10' или 'Тверская область, Вараксино')", value="Тверская область, ")
         delivery_date = st.date_input("Дата доставки", value=date.today(), format="DD.MM.YYYY")
         submit_button = st.form_submit_button(label="Рассчитать")
 
@@ -605,4 +606,3 @@ else:
                 st.error(f"Ошибка: {e}")
             except Exception as e:
                 st.error(f"Ошибка при расчёте: {e}")
-
