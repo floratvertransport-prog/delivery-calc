@@ -334,6 +334,16 @@ def find_nearest_optimal_day(locality, current_date):
         return None
     days_of_week = list(route_groups.keys())
     current_day = current_date.weekday()
+    # Словарь для перевода дней недели на русский
+    day_translation = {
+        'Monday': 'Понедельник',
+        'Tuesday': 'Вторник',
+        'Wednesday': 'Среда',
+        'Thursday': 'Четверг',
+        'Friday': 'Пятница',
+        'Saturday': 'Суббота',
+        'Sunday': 'Воскресенье'
+    }
     for i in range(7):  # Проверяем следующую неделю
         next_day = (current_day + i) % 7
         if str(next_day) in route_groups:
@@ -341,7 +351,8 @@ def find_nearest_optimal_day(locality, current_date):
                 for point in route_locations:
                     if locality.lower() in point["name"].lower():
                         new_date = current_date + timedelta(days=i)
-                        return new_date.strftime('%A')
+                        english_day = new_date.strftime('%A')
+                        return day_translation.get(english_day, english_day)  # Возвращаем день на русском
     return None
 
 # Округление стоимости
